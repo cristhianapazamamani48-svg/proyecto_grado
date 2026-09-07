@@ -1,0 +1,264 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RolUsuario {
+  SUPER_ADMIN
+  DOCENTE
+}
+
+enum EstadoGeneral {
+  ACTIVO
+  INACTIVO
+}
+
+enum EstadoEvaluacion {
+  BORRADOR
+  PUBLICADA
+  ARCHIVADA
+}
+
+enum TipoPregunta {
+  OPCION_MULTIPLE
+  SELECCION_MULTIPLE
+  VERDADERO_FALSO
+  COMPLETAR
+  ABIERTA
+}
+
+enum ModoCalificacionEspacio {
+  EXACTA
+  CONTIENE
+}
+
+enum ModoInicioSesion {
+  INMEDIATO
+  PROGRAMADO
+  POR_PARTICIPANTE
+}
+
+enum EstadoSesion {
+  PENDIENTE
+  ACTIVA
+  FINALIZADA
+}
+
+enum EstadoParticipante {
+  EN_PROGRESO
+  FINALIZADO
+  VENCIDO
+}
+
+enum TipoEventoMonitoreo {
+  CAMBIO_PESTANA
+  CLICK_DERECHO
+  COPIAR
+  PEGAR
+  REDIMENSIONAR
+  PERDIDA_FOCO
+}
+
+model Usuario {
+  idUsuario     Int           @id @default(autoincrement()) @map("id_usuario")
+  nombre        String        @db.VarChar(100)
+  apellido      String        @db.VarChar(100)
+  correo        String        @unique @db.VarChar(150)
+  password      String        @db.VarChar(255)
+  rol           RolUsuario
+  estado        EstadoGeneral @default(ACTIVO)
+  fechaCreacion DateTime      @default(now()) @map("fecha_creacion")
+
+  evaluaciones         Evaluacion[]
+  correccionesDocente  Respuesta[]   @relation("CorreccionesDocente")
+
+  @@map("usuario")
+}
+
+model Estudiante {
+  idEstudiante  Int           @id @default(autoincrement()) @map("id_estudiante")
+  nombre        String        @db.VarChar(100)
+  apellido      String        @db.VarChar(100)
+  correo        String        @unique @db.VarChar(150)
+  password      String        @db.VarChar(255)
+  estado        EstadoGeneral @default(ACTIVO)
+  fechaCreacion DateTime      @default(now()) @map("fecha_creacion")
+
+  participaciones Participante[]
+
+  @@map("estudiante")
+}
+
+model Evaluacion {
+  idEvaluacion          Int              @id @default(autoincrement()) @map("id_evaluacion")
+  idUsuario             Int              @map("id_usuario")
+  nombre                String           @db.VarChar(200)
+  descripcion           String?          @db.Text
+  estado                EstadoEvaluacion @default(BORRADOR)
+  tiempoTotal           Int?             @map("tiempo_total")
+  tiempoPorPregunta     Int?             @map("tiempo_por_pregunta")
+  permitirRetroceder    Boolean          @default(true) @map("permitir_retroceder")
+  permitirModificar     Boolean          @default(true) @map("permitir_modificar")
+  permitirDejarEnBlanco Boolean          @default(true) @map("permitir_dejar_en_blanco")
+  mostrarResultados     Boolean          @default(true) @map("mostrar_resultados")
+  mostrarRespuestas     Boolean          @default(false) @map("mostrar_respuestas")
+  permitirRevision      Boolean          @default(false) @map("permitir_revision")
+  aleatorizarPreguntas  Boolean          @default(false) @map("aleatorizar_preguntas")
+  aleatorizarOpciones   Boolean          @default(false) @map("aleatorizar_opciones")
+  detectarCambioPestana Boolean          @default(false) @map("detectar_cambio_pestana")
+  detectarClickDerecho  Boolean          @default(false) @map("detectar_click_derecho")
+  detectarCopiar        Boolean          @default(false) @map("detectar_copiar")
+  detectarPegar         Boolean          @default(false) @map("detectar_pegar")
+  detectarRedimensionar Boolean          @default(false) @map("detectar_redimensionar")
+  modoInicio            ModoInicioSesion @default(INMEDIATO) @map("modo_inicio")
+  fechaInicio           DateTime?        @map("fecha_inicio")
+  fechaFin              DateTime?        @map("fecha_fin")
+  fechaCreacion         DateTime         @default(now()) @map("fecha_creacion")
+  fechaActualizacion    DateTime         @updatedAt @map("fecha_actualizacion")
+
+  usuario    Usuario    @relation(fields: [idUsuario], references: [idUsuario], onDelete: Restrict, onUpdate: Cascade)
+  preguntas  Pregunta[]
+  sesiones   Sesion[]
+
+  @@map("evaluacion")
+}
+
+model Pregunta {
+  idPregunta   Int          @id @default(autoincrement()) @map("id_pregunta")
+  idEvaluacion Int          @map("id_evaluacion")
+  tipo         TipoPregunta
+  enunciado    String       @db.Text
+  imagen       String?      @db.VarChar(255)
+  puntaje      Decimal      @default(1) @db.Decimal(5, 2)
+  orden        Int
+
+  evaluacion Evaluacion         @relation(fields: [idEvaluacion], references: [idEvaluacion], onDelete: Cascade, onUpdate: Cascade)
+  opciones   OpcionRespuesta[]
+  espacios   EspacioCompletar[]
+  respuestas Respuesta[]
+
+  @@unique([idEvaluacion, orden], map: "uq_pregunta_orden")
+  @@map("pregunta")
+}
+
+model OpcionRespuesta {
+  idOpcion   Int     @id @default(autoincrement()) @map("id_opcion")
+  idPregunta Int     @map("id_pregunta")
+  texto      String  @db.Text
+  esCorrecta Boolean @default(false) @map("es_correcta")
+
+  pregunta               Pregunta                @relation(fields: [idPregunta], references: [idPregunta], onDelete: Cascade, onUpdate: Cascade)
+  respuestasSeleccionadas RespuestaSeleccionada[]
+
+  @@map("opcion_respuesta")
+}
+
+model EspacioCompletar {
+  idEspacio          Int                     @id @default(autoincrement()) @map("id_espacio")
+  idPregunta         Int                     @map("id_pregunta")
+  numeroEspacio      Int                     @map("numero_espacio")
+  ignorarMayusculas  Boolean                 @default(true) @map("ignorar_mayusculas")
+  modoCalificacion   ModoCalificacionEspacio @default(EXACTA) @map("modo_calificacion")
+  calificacionParcial Boolean                @default(false) @map("calificacion_parcial")
+
+  pregunta         Pregunta          @relation(fields: [idPregunta], references: [idPregunta], onDelete: Cascade, onUpdate: Cascade)
+  respuestasValidas RespuestaValida[]
+
+  @@unique([idPregunta, numeroEspacio], map: "uq_espacio_numero")
+  @@map("espacio_completar")
+}
+
+model RespuestaValida {
+  idRespuestaValida Int    @id @default(autoincrement()) @map("id_respuesta_valida")
+  idEspacio         Int    @map("id_espacio")
+  respuesta         String @db.VarChar(255)
+
+  espacioCompletar EspacioCompletar @relation(fields: [idEspacio], references: [idEspacio], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("respuesta_valida")
+}
+
+model Sesion {
+  idSesion     Int          @id @default(autoincrement()) @map("id_sesion")
+  idEvaluacion Int          @map("id_evaluacion")
+  codigo       String       @unique @db.VarChar(20)
+  estado       EstadoSesion @default(PENDIENTE)
+  fechaInicio  DateTime?    @map("fecha_inicio")
+  fechaFin     DateTime?    @map("fecha_fin")
+
+  evaluacion    Evaluacion     @relation(fields: [idEvaluacion], references: [idEvaluacion], onDelete: Restrict, onUpdate: Cascade)
+  participantes Participante[]
+
+  @@map("sesion")
+}
+
+model Participante {
+  idParticipante    Int                @id @default(autoincrement()) @map("id_participante")
+  idSesion          Int                @map("id_sesion")
+  idEstudiante      Int?               @map("id_estudiante")
+  nombre            String             @db.VarChar(200)
+  tokenAcceso       String?            @map("token_acceso") @db.VarChar(64)
+  fechaIngreso      DateTime?          @map("fecha_ingreso")
+  fechaFinalizacion DateTime?          @map("fecha_finalizacion")
+  puntajeTotal      Decimal?           @map("puntaje_total") @db.Decimal(6, 2)
+  porcentaje        Decimal?           @db.Decimal(6, 2)
+  estado            EstadoParticipante @default(EN_PROGRESO)
+
+  sesion           Sesion            @relation(fields: [idSesion], references: [idSesion], onDelete: Restrict, onUpdate: Cascade)
+  estudiante       Estudiante?       @relation(fields: [idEstudiante], references: [idEstudiante], onDelete: SetNull, onUpdate: Cascade)
+  respuestas       Respuesta[]
+  eventosMonitoreo EventoMonitoreo[]
+
+  @@unique([idSesion, idEstudiante], map: "uq_participante_sesion_estudiante")
+  @@map("participante")
+}
+
+model Respuesta {
+  idRespuesta        Int       @id @default(autoincrement()) @map("id_respuesta")
+  idParticipante     Int       @map("id_participante")
+  idPregunta         Int       @map("id_pregunta")
+  respuestaTexto     String?   @map("respuesta_texto") @db.Text
+  puntaje            Decimal?  @db.Decimal(6, 2)
+  esCorrecta         Boolean?  @map("es_correcta")
+  comentarioIa       String?   @map("comentario_ia") @db.Text
+  puntajeSugeridoIa  Decimal?  @map("puntaje_sugerido_ia") @db.Decimal(6, 2)
+  corregidoDocente   Boolean   @default(false) @map("corregido_docente")
+  idUsuarioCorrector Int?      @map("id_usuario_corrector")
+  fechaCorreccion    DateTime? @map("fecha_correccion")
+
+  participante           Participante            @relation(fields: [idParticipante], references: [idParticipante], onDelete: Cascade, onUpdate: Cascade)
+  pregunta               Pregunta                @relation(fields: [idPregunta], references: [idPregunta], onDelete: Restrict, onUpdate: Cascade)
+  usuarioCorrector       Usuario?                @relation("CorreccionesDocente", fields: [idUsuarioCorrector], references: [idUsuario], onDelete: SetNull, onUpdate: Cascade)
+  opcionesSeleccionadas RespuestaSeleccionada[]
+
+  @@unique([idParticipante, idPregunta], map: "uq_respuesta_participante_pregunta")
+  @@map("respuesta")
+}
+
+model RespuestaSeleccionada {
+  idRespuestaSeleccionada Int @id @default(autoincrement()) @map("id_respuesta_seleccionada")
+  idRespuesta             Int @map("id_respuesta")
+  idOpcion                Int @map("id_opcion")
+
+  respuesta Respuesta       @relation(fields: [idRespuesta], references: [idRespuesta], onDelete: Cascade, onUpdate: Cascade)
+  opcion    OpcionRespuesta @relation(fields: [idOpcion], references: [idOpcion], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([idRespuesta, idOpcion], map: "uq_respuesta_opcion")
+  @@map("respuesta_seleccionada")
+}
+
+model EventoMonitoreo {
+  idEvento       Int                 @id @default(autoincrement()) @map("id_evento")
+  idParticipante Int                 @map("id_participante")
+  tipo           TipoEventoMonitoreo
+  detalle        String?             @db.Text
+  fechaEvento    DateTime            @default(now()) @map("fecha_evento")
+
+  participante Participante @relation(fields: [idParticipante], references: [idParticipante], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("evento_monitoreo")
+}
