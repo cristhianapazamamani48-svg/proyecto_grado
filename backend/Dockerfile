@@ -10,7 +10,7 @@ RUN npm ci --legacy-peer-deps
 
 COPY . .
 
-RUN npx prisma generate
+RUN ./node_modules/.bin/prisma generate
 RUN npm run build
 
 # --- STAGE 2: Production ---
