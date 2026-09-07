@@ -7,7 +7,7 @@ COPY package*.json ./
 COPY prisma ./prisma/
 
 RUN npm ci --legacy-peer-deps
-RUN ./node_modules/.bin/prisma generate
+RUN npm run prisma:generate
 
 COPY . .
 RUN npm run build
