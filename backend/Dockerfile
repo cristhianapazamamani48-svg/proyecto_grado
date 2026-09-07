@@ -23,7 +23,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 COPY prisma ./prisma/
 
-RUN npm ci --only=production --legacy-peer-deps && npx prisma generate
+RUN npm ci --only=production --legacy-peer-deps && ./node_modules/.bin/prisma generate
 
 COPY --from=builder /app/dist ./dist
 
