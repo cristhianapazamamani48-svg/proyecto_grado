@@ -98,7 +98,7 @@ export class SesionesService {
   }
 
   async reanudarSesion(tokenAcceso: string) {
-    const participante = await this.prisma.participante.findUnique({
+    const participante = await this.prisma.participante.findFirst({
       where: { tokenAcceso },
       include: {
         sesion: { include: { evaluacion: true } },
