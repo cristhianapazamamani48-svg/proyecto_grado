@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException, Patch, Param } from '@nestjs/common';
 import { SesionesService } from './sesiones.service';
 import { AuthGuard } from '@nestjs/passport';
 
@@ -21,6 +21,20 @@ export class SesionesController {
   @Post('reanudar')
   async reanudar(@Body() body: { tokenAcceso: string }) {
     return this.sesionesService.reanudarSesion(body.tokenAcceso);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Patch(':id/iniciar')
+  async iniciarSesion(@Request() req: any, @Param('id') id: string) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.iniciarSesion(Number(req.user.sub), Number(id));
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('intento/estado')
+  async estadoIntento(@Request() req: any) {
+    this.requiereParticipante(req.user);
+    return this.sesionesService.obtenerEstadoIntento(Number(req.user.sub));
   }
 
   @UseGuards(AuthGuard('jwt'))

@@ -16,6 +16,7 @@ export default function ExamenPlayerPage() {
   const [respuestas, setRespuestas] = useState<Record<string, { opciones: string[]; texto?: string; espacios?: Record<string, string> }>>({});
   const [finalizado, setFinalizado] = useState(false);
   const [resultado, setResultado] = useState<any>(null);
+  const [estadoSala, setEstadoSala] = useState<'PENDIENTE' | 'ACTIVA' | 'FINALIZADA'>('PENDIENTE');
 
   useEffect(() => {
     const cargarExamen = async () => {
@@ -37,6 +38,17 @@ export default function ExamenPlayerPage() {
           token = datosReanudacion.token;
           localStorage.setItem('uub_guest_token', datosReanudacion.token);
         }
+        const estadoRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/sesiones/intento/estado`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const estadoData = await estadoRes.json();
+        if (!estadoRes.ok) throw new Error(estadoData.message || 'No fue posible consultar la sala.');
+        setEstadoSala(estadoData.estadoSesion);
+        if (estadoData.estadoSesion !== 'ACTIVA') {
+          setCargando(false);
+          return;
+        }
+
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/sesiones/intento/iniciar`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -68,6 +80,21 @@ export default function ExamenPlayerPage() {
 
     cargarExamen();
   }, [codigo, router]);
+
+  useEffect(() => {
+    if (estadoSala !== 'PENDIENTE') return;
+    const token = localStorage.getItem('uub_guest_token');
+    if (!token) return;
+    const intervalo = window.setInterval(async () => {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/sesiones/intento/estado`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.estadoSesion === 'ACTIVA') window.location.reload();
+    }, 2000);
+    return () => window.clearInterval(intervalo);
+  }, [estadoSala]);
 
   const guardarRespuestaServidor = async (preguntaId: string, opc: string[], texto?: string, espacios?: Record<string, string>) => {
     const token = localStorage.getItem('uub_guest_token');
@@ -182,6 +209,18 @@ export default function ExamenPlayerPage() {
           <button onClick={() => router.push('/unirse')} className="px-4 py-2 bg-slate-800 text-white rounded-xl">
             Volver a intentar
           </button>
+        </div>
+      </main>
+    );
+  }
+
+  if (estadoSala === 'PENDIENTE') {
+    return (
+      <main className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6">
+        <div className="bg-slate-800 border border-slate-700 p-8 rounded-2xl max-w-md w-full text-center space-y-4 shadow-2xl">
+          <h1 className="text-2xl font-bold">Sala de espera</h1>
+          <p className="text-slate-300">Ya estás registrado. El docente iniciará la evaluación cuando todos estén listos.</p>
+          <div className="animate-pulse text-indigo-400 font-semibold">Esperando inicio...</div>
         </div>
       </main>
     );
@@ -355,6 +394,10 @@ export default function ExamenPlayerPage() {
               )}
             </div>
           </div>
+        )}
+
+        {!pregActual && (
+          <div className="bg-slate-800 border border-amber-500/30 rounded-2xl p-6 text-amber-300 text-center">No hay preguntas disponibles para esta evaluación.</div>
         )}
 
         {/* Navigation Footer */}

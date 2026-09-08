@@ -22,6 +22,8 @@ export default function DocenteDashboardPage() {
   const [evaluaciones, setEvaluaciones] = useState<any[]>([]);
   const [cargando, setCargando] = useState(true);
   const [codigoSesion, setCodigoSesion] = useState('');
+  const [idSesion, setIdSesion] = useState<number | null>(null);
+  const [sesionIniciada, setSesionIniciada] = useState(false);
   const [menuAbierto, setMenuAbierto] = useState<number | null>(null);
   const [confirmEliminar, setConfirmEliminar] = useState<number | null>(null);
   const [mensaje, setMensaje] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
@@ -77,7 +79,18 @@ export default function DocenteDashboardPage() {
     try {
       const data = await accion('/sesiones', 'POST', { idEvaluacion });
       setCodigoSesion(data.codigo);
-      mostrarMensaje('ok', `Sesión creada con código: ${data.codigo}`);
+      setIdSesion(data.idSesion);
+      setSesionIniciada(false);
+      mostrarMensaje('ok', `Sala de espera creada con código: ${data.codigo}`);
+    } catch (e: any) { mostrarMensaje('error', e.message); }
+  };
+
+  const handleIniciarSesion = async () => {
+    if (!idSesion) return;
+    try {
+      await accion(`/sesiones/${idSesion}/iniciar`, 'PATCH');
+      setSesionIniciada(true);
+      mostrarMensaje('ok', 'La evaluación ha comenzado para los estudiantes en espera.');
     } catch (e: any) { mostrarMensaje('error', e.message); }
   };
 
@@ -154,13 +167,14 @@ export default function DocenteDashboardPage() {
         {codigoSesion && (
           <div className="p-6 bg-blue-50 border border-blue-200 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div>
-              <p className="text-xs text-blue-600 font-bold uppercase tracking-widest">Sesión Activa</p>
+              <p className="text-xs text-blue-600 font-bold uppercase tracking-widest">{sesionIniciada ? 'Evaluación iniciada' : 'Sala de espera'}</p>
               <h3 className="text-4xl font-mono font-black text-slate-900 tracking-widest mt-1">{codigoSesion}</h3>
               <p className="text-sm text-slate-500 mt-1">Comparte este código con tus estudiantes.</p>
             </div>
-            <button onClick={() => setCodigoSesion('')} className="px-5 py-2 bg-white border border-slate-200 text-slate-600 font-medium text-sm rounded-full hover:bg-slate-50 transition-colors">
-              Cerrar
-            </button>
+            <div className="flex gap-3">
+              {!sesionIniciada && <button onClick={handleIniciarSesion} className="px-5 py-2 bg-blue-600 text-white font-bold text-sm rounded-full hover:bg-blue-700 transition-colors">Iniciar evaluación</button>}
+              <button onClick={() => { setCodigoSesion(''); setIdSesion(null); }} className="px-5 py-2 bg-white border border-slate-200 text-slate-600 font-medium text-sm rounded-full hover:bg-slate-50 transition-colors">Cerrar</button>
+            </div>
           </div>
         )}
 

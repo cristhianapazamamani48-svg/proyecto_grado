@@ -48,8 +48,7 @@ export class SesionesService {
       data: {
         idEvaluacion,
         codigo,
-        estado: EstadoSesion.ACTIVA,
-        fechaInicio: new Date(),
+        estado: EstadoSesion.PENDIENTE,
       },
     });
   }
@@ -60,7 +59,7 @@ export class SesionesService {
       include: { evaluacion: true },
     });
 
-    if (!sesion || sesion.estado !== EstadoSesion.ACTIVA) {
+    if (!sesion || (sesion.estado !== EstadoSesion.PENDIENTE && sesion.estado !== EstadoSesion.ACTIVA)) {
       throw new NotFoundException('La sesión de evaluación no existe o no está activa.');
     }
 
@@ -88,6 +87,7 @@ export class SesionesService {
       idParticipante: participante.idParticipante,
       tokenAcceso: participante.tokenAcceso,
       token,
+      estado: sesion.estado,
       sesion: {
         codigo: sesion.codigo,
         nombreEvaluacion: sesion.evaluacion.nombre,
@@ -123,6 +123,35 @@ export class SesionesService {
       token,
       sesion: participante.sesion,
     };
+  }
+
+  async obtenerEstadoIntento(idParticipante: number) {
+    const participante = await this.prisma.participante.findUnique({
+      where: { idParticipante },
+      select: { idParticipante: true, estado: true, sesion: { select: { estado: true } } },
+    });
+
+    if (!participante) throw new NotFoundException('Participante no encontrado.');
+    return { estadoSesion: participante.sesion.estado, estadoParticipante: participante.estado };
+  }
+
+  async iniciarSesion(idUsuario: number, idSesion: number) {
+    const sesion = await this.prisma.sesion.findUnique({
+      where: { idSesion },
+      include: { evaluacion: true },
+    });
+
+    if (!sesion || sesion.evaluacion.idUsuario !== idUsuario) {
+      throw new NotFoundException('Sesión no encontrada.');
+    }
+    if (sesion.estado !== EstadoSesion.PENDIENTE) {
+      throw new BadRequestException('La sesión ya fue iniciada o finalizada.');
+    }
+
+    return this.prisma.sesion.update({
+      where: { idSesion },
+      data: { estado: EstadoSesion.ACTIVA, fechaInicio: new Date() },
+    });
   }
 
   async obtenerExamenParaEstudiante(idParticipante: number) {
@@ -188,7 +217,7 @@ export class SesionesService {
       },
     });
 
-    if (!participante || participante.estado !== EstadoParticipante.EN_PROGRESO) {
+    if (!participante || participante.estado !== EstadoParticipante.EN_PROGRESO || participante.sesion.estado !== EstadoSesion.ACTIVA) {
       throw new NotFoundException('No existe un intento activo para este participante.');
     }
 
