@@ -18,14 +18,25 @@ export default function ExamenPlayerPage() {
   const [resultado, setResultado] = useState<any>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('uub_guest_token');
-    if (!token) {
-      router.push('/unirse');
-      return;
-    }
-
     const cargarExamen = async () => {
       try {
+        let token = localStorage.getItem('uub_guest_token');
+        if (!token) {
+          const tokenAcceso = localStorage.getItem('uub_token_reanudacion');
+          if (!tokenAcceso) {
+            router.push('/unirse');
+            return;
+          }
+          const reanudacion = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/sesiones/reanudar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tokenAcceso }),
+          });
+          const datosReanudacion = await reanudacion.json();
+          if (!reanudacion.ok) throw new Error(datosReanudacion.message || 'No fue posible reanudar la sesión.');
+          token = datosReanudacion.token;
+          localStorage.setItem('uub_guest_token', datosReanudacion.token);
+        }
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/sesiones/intento/iniciar`, {
           headers: { Authorization: `Bearer ${token}` },
         });

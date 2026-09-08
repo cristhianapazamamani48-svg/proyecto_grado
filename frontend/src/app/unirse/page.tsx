@@ -27,9 +27,9 @@ export default function UnirsePage() {
         throw new Error(data.message || 'Error al unirse a la sesión');
       }
 
-      // Guardar token y tokenReanudacion en localStorage para recuperar sesión si cae la conexión
+      // Persist the participant credentials so the current session can be resumed.
       localStorage.setItem('uub_guest_token', data.token);
-      localStorage.setItem('uub_token_reanudacion', data.tokenReanudacion);
+      localStorage.setItem('uub_token_reanudacion', data.tokenAcceso);
       localStorage.setItem('uub_nombre_estudiante', nombreCompleto);
 
       router.push(`/examen/${data.sesion.codigo}`);

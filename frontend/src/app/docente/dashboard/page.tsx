@@ -42,7 +42,7 @@ export default function DocenteDashboardPage() {
     cargarEvaluaciones();
   }, [router]);
 
-  const handleCrearSesion = async (evaluacionId: string) => {
+  const handleCrearSesion = async (evaluacionId: number) => {
     const token = localStorage.getItem('uub_docente_token');
     if (!token) return;
 
@@ -53,7 +53,7 @@ export default function DocenteDashboardPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ evaluacionId, modoInicio: 'INMEDIATO' }),
+        body: JSON.stringify({ idEvaluacion: evaluacionId }),
       });
 
       const data = await res.json();
@@ -145,28 +145,26 @@ export default function DocenteDashboardPage() {
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {evaluaciones.map((ev) => (
               <div
-                key={ev.id}
+                key={ev.idEvaluacion}
                 className="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-xl flex flex-col justify-between space-y-4 hover:border-slate-600 transition-colors"
               >
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded border border-indigo-500/30">
-                      v{ev.versiones?.[0]?.version || 1}
-                    </span>
+                    <span className="text-xs font-semibold px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded border border-indigo-500/30">Borrador</span>
                     <span className="text-xs text-slate-400">{ev._count?.sesiones || 0} Sesiones</span>
                   </div>
-                  <h3 className="text-xl font-bold text-white leading-tight">{ev.titulo}</h3>
+                  <h3 className="text-xl font-bold text-white leading-tight">{ev.nombre}</h3>
                   {ev.descripcion && <p className="text-sm text-slate-400 line-clamp-2">{ev.descripcion}</p>}
                 </div>
 
                 <div className="pt-2 border-t border-slate-700/60 flex items-center justify-between">
                   <button
-                    onClick={() => handleCrearSesion(ev.id)}
+                    onClick={() => handleCrearSesion(ev.idEvaluacion)}
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-colors"
                   >
                     🚀 Lanzar Sesión
                   </button>
-                  <span className="text-xs text-slate-400 font-mono">ID: {ev.id.substring(0, 8)}...</span>
+                  <span className="text-xs text-slate-400 font-mono">ID: {ev.idEvaluacion}</span>
                 </div>
               </div>
             ))}
