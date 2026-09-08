@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Request, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request, ForbiddenException, Patch } from '@nestjs/common';
 import { EvaluacionesService } from './evaluaciones.service';
 import { AuthGuard } from '@nestjs/passport';
+import { EstadoEvaluacion } from '@prisma/client';
 
 @Controller('evaluaciones')
 @UseGuards(AuthGuard('jwt'))
@@ -27,5 +28,29 @@ export class EvaluacionesController {
   async crear(@Request() req: any, @Body() dto: any) {
     this.requiereDocente(req.user);
     return this.evaluacionesService.crearEvaluacion(Number(req.user.sub), dto);
+  }
+
+  @Put(':id')
+  async actualizar(@Param('id') id: string, @Request() req: any, @Body() dto: any) {
+    this.requiereDocente(req.user);
+    return this.evaluacionesService.actualizarEvaluacion(Number(id), Number(req.user.sub), dto);
+  }
+
+  @Post(':id/duplicar')
+  async duplicar(@Param('id') id: string, @Request() req: any) {
+    this.requiereDocente(req.user);
+    return this.evaluacionesService.duplicarEvaluacion(Number(id), Number(req.user.sub));
+  }
+
+  @Patch(':id/estado')
+  async cambiarEstado(@Param('id') id: string, @Request() req: any, @Body('estado') estado: EstadoEvaluacion) {
+    this.requiereDocente(req.user);
+    return this.evaluacionesService.cambiarEstado(Number(id), Number(req.user.sub), estado);
+  }
+
+  @Delete(':id')
+  async eliminar(@Param('id') id: string, @Request() req: any) {
+    this.requiereDocente(req.user);
+    return this.evaluacionesService.eliminarEvaluacion(Number(id), Number(req.user.sub));
   }
 }
