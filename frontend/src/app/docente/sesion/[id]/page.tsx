@@ -49,6 +49,14 @@ export default function SesionControlPage() {
   const [filtroTipoEvento, setFiltroTipoEvento] = useState<string>('TODOS');
   const socketRef = useRef<Socket | null>(null);
 
+  const eventosDeParticipantes = (participantes: any[] = []) => participantes.flatMap((participante) =>
+    (participante.eventosMonitoreo || []).map((evento: any) => ({
+      ...evento,
+      idParticipante: participante.idParticipante,
+      nombreParticipante: participante.nombre,
+    })),
+  ).sort((a, b) => new Date(b.fechaEvento).getTime() - new Date(a.fechaEvento).getTime());
+
   const cargar = useCallback(async () => {
     const token = getToken();
     if (!token) {
@@ -65,6 +73,14 @@ export default function SesionControlPage() {
       }
       const data = await res.json();
       setSesion(data);
+      setInfraccionesEnVivo((actuales) => {
+        const historicas = eventosDeParticipantes(data.participantes);
+        const combinadas = [...actuales, ...historicas];
+        const unicas = new Map(combinadas.map((evento) => [evento.idEvento, evento]));
+        return Array.from(unicas.values())
+          .sort((a, b) => new Date(b.fechaEvento).getTime() - new Date(a.fechaEvento).getTime())
+          .slice(0, 50);
+      });
     } catch {
       setError('Error de conexión con el servidor.');
     } finally {
