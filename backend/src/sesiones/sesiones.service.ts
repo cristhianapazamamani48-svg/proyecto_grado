@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { CalificacionService } from '../calificacion/calificacion.service';
 import { JwtService } from '@nestjs/jwt';
-import { ModoInicioSesion, EstadoSesion, EstadoParticipante, TipoPregunta } from '@prisma/client';
+import { ModoInicioSesion, EstadoSesion, EstadoParticipante, TipoPregunta, EstadoEvaluacion } from '@prisma/client';
 
 export interface CrearSesionDto {
   evaluacionId: number;
@@ -37,6 +37,10 @@ export class SesionesService {
       throw new NotFoundException('Evaluación no encontrada.');
     }
 
+    if (evaluacion.estado !== EstadoEvaluacion.PUBLICADA) {
+      throw new BadRequestException('Solo se pueden lanzar sesiones de evaluaciones publicadas.');
+    }
+
     let codigo = this.generarCodigoUnico();
     let existe = await this.prisma.sesion.findUnique({ where: { codigo } });
     while (existe) {
@@ -59,8 +63,16 @@ export class SesionesService {
       include: { evaluacion: true },
     });
 
-    if (!sesion || (sesion.estado !== EstadoSesion.PENDIENTE && sesion.estado !== EstadoSesion.ACTIVA)) {
-      throw new NotFoundException('La sesión de evaluación no existe o no está activa.');
+    if (!sesion) {
+      throw new NotFoundException('La sesión de evaluación no existe.');
+    }
+
+    if (sesion.estado === EstadoSesion.FINALIZADA) {
+      throw new BadRequestException('Esta sesión ya ha finalizado. No se aceptan nuevos ingresos.');
+    }
+
+    if (sesion.estado !== EstadoSesion.PENDIENTE && sesion.estado !== EstadoSesion.ACTIVA) {
+      throw new NotFoundException('La sesión de evaluación no está disponible.');
     }
 
     const tokenAcceso = this.generarCodigoUnico() + Date.now().toString(36);
@@ -89,6 +101,7 @@ export class SesionesService {
       token,
       estado: sesion.estado,
       sesion: {
+        idSesion: sesion.idSesion,
         codigo: sesion.codigo,
         nombreEvaluacion: sesion.evaluacion.nombre,
         tiempoTotal: sesion.evaluacion.tiempoTotal,
@@ -154,6 +167,235 @@ export class SesionesService {
     });
   }
 
+  async finalizarSesion(idUsuario: number, idSesion: number) {
+    const sesion = await this.prisma.sesion.findUnique({
+      where: { idSesion },
+      include: {
+        evaluacion: {
+          include: {
+            preguntas: {
+              include: {
+                opciones: { select: { idOpcion: true, esCorrecta: true } },
+                espacios: { include: { respuestasValidas: true } },
+              },
+            },
+          },
+        },
+        participantes: {
+          where: { estado: EstadoParticipante.EN_PROGRESO },
+          include: {
+            respuestas: { include: { opcionesSeleccionadas: true } },
+          },
+        },
+      },
+    });
+
+    if (!sesion || sesion.evaluacion.idUsuario !== idUsuario) {
+      throw new NotFoundException('Sesión no encontrada.');
+    }
+    if (sesion.estado === EstadoSesion.FINALIZADA) {
+      throw new BadRequestException('La sesión ya está finalizada.');
+    }
+
+    const preguntas = sesion.evaluacion.preguntas;
+    const puntajeMaximoPosible = preguntas.reduce((sum, p) => sum + Number(p.puntaje), 0);
+
+    await this.prisma.$transaction(async (tx) => {
+      // Calificar y cerrar a todos los participantes EN_PROGRESO
+      for (const participante of sesion.participantes) {
+        const respuestasPorPregunta = new Map(
+          participante.respuestas.map((r) => [r.idPregunta, r]),
+        );
+        let puntajeTotalObtenido = 0;
+
+        for (const pregunta of preguntas) {
+          const respuesta = respuestasPorPregunta.get(pregunta.idPregunta);
+          if (!respuesta) continue;
+
+          const calificacion = this.calificacionService.calificarRespuestaObjetiva(
+            pregunta.tipo,
+            Number(pregunta.puntaje),
+            pregunta.opciones,
+            respuesta.opcionesSeleccionadas.map((o) => o.idOpcion),
+            pregunta.espacios.map((e) => ({
+              numeroEspacio: e.numeroEspacio,
+              respuestasValidas: e.respuestasValidas.map((rv) => rv.respuesta),
+              modoCalificacion: e.modoCalificacion,
+              ignorarMayusculas: e.ignorarMayusculas,
+            })),
+            this.parsearEspacios(respuesta.respuestaTexto),
+          );
+
+          puntajeTotalObtenido += calificacion.puntaje;
+          await tx.respuesta.update({
+            where: { idRespuesta: respuesta.idRespuesta },
+            data: { puntaje: calificacion.puntaje, esCorrecta: calificacion.esCorrecta },
+          });
+        }
+
+        await tx.participante.update({
+          where: { idParticipante: participante.idParticipante },
+          data: {
+            estado: EstadoParticipante.FINALIZADO,
+            fechaFinalizacion: new Date(),
+            puntajeTotal: puntajeTotalObtenido,
+            porcentaje:
+              puntajeMaximoPosible === 0
+                ? 0
+                : (puntajeTotalObtenido / puntajeMaximoPosible) * 100,
+          },
+        });
+      }
+
+      // Cerrar la sesión
+      await tx.sesion.update({
+        where: { idSesion },
+        data: { estado: EstadoSesion.FINALIZADA, fechaFin: new Date() },
+      });
+    });
+
+    return { mensaje: 'Sesión finalizada correctamente.', idSesion };
+  }
+
+  async obtenerSesion(idUsuario: number, idSesion: number) {
+    const sesion = await this.prisma.sesion.findUnique({
+      where: { idSesion },
+      include: {
+        evaluacion: { select: { idEvaluacion: true, nombre: true, idUsuario: true } },
+        participantes: {
+          orderBy: { fechaIngreso: 'asc' },
+          select: {
+            idParticipante: true,
+            nombre: true,
+            estado: true,
+            puntajeTotal: true,
+            porcentaje: true,
+            fechaIngreso: true,
+            fechaFinalizacion: true,
+          },
+        },
+      },
+    });
+
+    if (!sesion || sesion.evaluacion.idUsuario !== idUsuario) {
+      throw new NotFoundException('Sesión no encontrada.');
+    }
+
+    const totalParticipantes = sesion.participantes.length;
+    const enProgreso = sesion.participantes.filter(
+      (p) => p.estado === EstadoParticipante.EN_PROGRESO,
+    ).length;
+    const finalizados = sesion.participantes.filter(
+      (p) => p.estado === EstadoParticipante.FINALIZADO,
+    ).length;
+
+    return {
+      idSesion: sesion.idSesion,
+      codigo: sesion.codigo,
+      estado: sesion.estado,
+      fechaInicio: sesion.fechaInicio,
+      fechaFin: sesion.fechaFin,
+      evaluacion: sesion.evaluacion,
+      resumen: { totalParticipantes, enProgreso, finalizados },
+      participantes: sesion.participantes,
+    };
+  }
+
+  async obtenerReporteSesion(idUsuario: number, idSesion: number) {
+    const sesion = await this.prisma.sesion.findUnique({
+      where: { idSesion },
+      include: {
+        evaluacion: {
+          include: {
+            preguntas: {
+              orderBy: { orden: 'asc' },
+              include: { opciones: true, espacios: true },
+            },
+          },
+        },
+        participantes: {
+          orderBy: { fechaIngreso: 'asc' },
+          include: {
+            respuestas: {
+              include: { opcionesSeleccionadas: { include: { opcion: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    if (!sesion || sesion.evaluacion.idUsuario !== idUsuario) {
+      throw new NotFoundException('Sesión no encontrada.');
+    }
+
+    const preguntas = sesion.evaluacion.preguntas;
+    const puntajeMaximoPosible = preguntas.reduce((sum, p) => sum + Number(p.puntaje), 0);
+
+    const participantesConRespuestas = sesion.participantes.map((p) => {
+      const respuestasPorPregunta = new Map(p.respuestas.map((r) => [r.idPregunta, r]));
+
+      const detalleRespuestas = preguntas.map((pregunta) => {
+        const respuesta = respuestasPorPregunta.get(pregunta.idPregunta);
+        return {
+          idPregunta: pregunta.idPregunta,
+          enunciado: pregunta.enunciado,
+          tipo: pregunta.tipo,
+          puntajeMaximo: Number(pregunta.puntaje),
+          puntajeObtenido: respuesta ? Number(respuesta.puntaje) : null,
+          esCorrecta: respuesta ? respuesta.esCorrecta : null,
+          respuestaTexto: respuesta ? respuesta.respuestaTexto : null,
+          opcionesSeleccionadas: respuesta
+            ? respuesta.opcionesSeleccionadas.map((os) => os.opcion.texto)
+            : [],
+          corregidoDocente: respuesta ? respuesta.corregidoDocente : false,
+        };
+      });
+
+      return {
+        idParticipante: p.idParticipante,
+        nombre: p.nombre,
+        estado: p.estado,
+        puntajeTotal: p.puntajeTotal ? Number(p.puntajeTotal) : null,
+        porcentaje: p.porcentaje ? Number(p.porcentaje) : null,
+        fechaIngreso: p.fechaIngreso,
+        fechaFinalizacion: p.fechaFinalizacion,
+        respuestas: detalleRespuestas,
+      };
+    });
+
+    const finalizados = participantesConRespuestas.filter((p) => p.estado === EstadoParticipante.FINALIZADO);
+    const puntajePromedio =
+      finalizados.length > 0
+        ? finalizados.reduce((sum, p) => sum + (p.puntajeTotal || 0), 0) / finalizados.length
+        : 0;
+
+    return {
+      sesion: {
+        idSesion: sesion.idSesion,
+        codigo: sesion.codigo,
+        estado: sesion.estado,
+        fechaInicio: sesion.fechaInicio,
+        fechaFin: sesion.fechaFin,
+      },
+      evaluacion: {
+        nombre: sesion.evaluacion.nombre,
+        descripcion: sesion.evaluacion.descripcion,
+        puntajeMaximoPosible,
+      },
+      resumen: {
+        totalParticipantes: sesion.participantes.length,
+        enProgreso: sesion.participantes.filter((p) => p.estado === EstadoParticipante.EN_PROGRESO).length,
+        finalizados: finalizados.length,
+        puntajePromedio: Math.round(puntajePromedio * 100) / 100,
+        porcentajePromedio:
+          puntajeMaximoPosible > 0 && finalizados.length > 0
+            ? Math.round((puntajePromedio / puntajeMaximoPosible) * 10000) / 100
+            : 0,
+      },
+      participantes: participantesConRespuestas,
+    };
+  }
+
   async obtenerExamenParaEstudiante(idParticipante: number) {
     const participante = await this.prisma.participante.findUnique({
       where: { idParticipante },
@@ -194,6 +436,7 @@ export class SesionesService {
       respuestasGuardadas: participante.respuestas,
     };
   }
+
   async iniciarIntento(idParticipante: number) {
     const participante = await this.prisma.participante.findUnique({
       where: { idParticipante },
@@ -254,6 +497,11 @@ export class SesionesService {
     });
     if (!participante || participante.estado !== EstadoParticipante.EN_PROGRESO) {
       throw new BadRequestException('El intento ya no está disponible para guardar respuestas.');
+    }
+
+    // Si la sesión fue finalizada por el docente, no permitir guardar
+    if (participante.sesion.estado === EstadoSesion.FINALIZADA) {
+      throw new BadRequestException('La sesión ha finalizado. No se pueden guardar más respuestas.');
     }
 
     const pregunta = await this.prisma.pregunta.findFirst({

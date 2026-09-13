@@ -31,6 +31,27 @@ export class SesionesController {
   }
 
   @UseGuards(AuthGuard('jwt'))
+  @Patch(':id/finalizar')
+  async finalizarSesion(@Request() req: any, @Param('id') id: string) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.finalizarSesion(Number(req.user.sub), Number(id));
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get(':id')
+  async obtenerSesion(@Request() req: any, @Param('id') id: string) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.obtenerSesion(Number(req.user.sub), Number(id));
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get(':id/reporte')
+  async obtenerReporte(@Request() req: any, @Param('id') id: string) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.obtenerReporteSesion(Number(req.user.sub), Number(id));
+  }
+
+  @UseGuards(AuthGuard('jwt'))
   @Get('intento/estado')
   async estadoIntento(@Request() req: any) {
     this.requiereParticipante(req.user);

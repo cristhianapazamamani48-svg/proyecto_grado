@@ -78,10 +78,8 @@ export default function DocenteDashboardPage() {
   const handleLanzarSesion = async (idEvaluacion: number) => {
     try {
       const data = await accion('/sesiones', 'POST', { idEvaluacion });
-      setCodigoSesion(data.codigo);
-      setIdSesion(data.idSesion);
-      setSesionIniciada(false);
-      mostrarMensaje('ok', `Sala de espera creada con código: ${data.codigo}`);
+      // Redirigir directamente a la página de control de la sesión
+      router.push(`/docente/sesion/${data.idSesion}`);
     } catch (e: any) { mostrarMensaje('error', e.message); }
   };
 

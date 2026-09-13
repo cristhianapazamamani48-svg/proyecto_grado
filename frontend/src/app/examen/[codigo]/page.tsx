@@ -295,7 +295,10 @@ export default function ExamenPlayerPage() {
 
             {/* Enunciado e Imagen */}
             <div className="space-y-4">
-              <h2 className="text-xl font-medium text-white leading-relaxed">{pregActual.enunciado}</h2>
+              {pregActual.tipo !== 'ESPACIO_COMPLETAR' || !/\[_\d+_\]/.test(pregActual.enunciado) ? (
+                <h2 className="text-xl font-medium text-white leading-relaxed">{pregActual.enunciado}</h2>
+              ) : null}
+
               {pregActual.imagenUrl && (
                 <div className="rounded-xl overflow-hidden border border-slate-700 bg-slate-900 max-h-64 flex justify-center">
                   <img src={pregActual.imagenUrl} alt="Imagen de pregunta" className="object-contain h-full" />
@@ -363,20 +366,44 @@ export default function ExamenPlayerPage() {
               )}
 
               {pregActual.tipo === 'ESPACIO_COMPLETAR' && (
-                <div className="space-y-4">
-                  <p className="text-xs text-indigo-400 font-semibold">Completa los espacios requeridos:</p>
-                  {pregActual.espacios.map((esp: any) => (
-                    <div key={esp.id} className="space-y-1">
-                      <label className="block text-xs text-slate-400">Espacio #{esp.posicion}</label>
-                      <input
-                        type="text"
-                        value={respActual?.espacios?.[esp.posicion] || ''}
-                        onChange={(e) => handleEspacioCompletar(pregActual.id, esp.posicion, e.target.value)}
-                        placeholder="Escribe tu respuesta..."
-                        className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500"
-                      />
+                <div className="space-y-6">
+                  {/\[_\d+_\]/.test(pregActual.enunciado) ? (
+                    <div className="p-6 bg-slate-900/80 border border-slate-700/80 rounded-2xl text-lg font-medium text-slate-100 leading-loose">
+                      {pregActual.enunciado.split(/(\[_\d+_\])/g).map((part: string, idx: number) => {
+                        const match = part.match(/\[_(\d+)_\]/);
+                        if (match) {
+                          const pos = parseInt(match[1], 10);
+                          return (
+                            <input
+                              key={idx}
+                              type="text"
+                              value={respActual?.espacios?.[pos] || ''}
+                              onChange={(e) => handleEspacioCompletar(pregActual.id, pos, e.target.value)}
+                              placeholder={`Espacio #${pos}`}
+                              className="inline-block mx-1.5 px-3 py-1 bg-slate-800 border-2 border-indigo-500/80 focus:border-indigo-400 rounded-xl text-white font-semibold text-center focus:outline-none focus:ring-2 focus:ring-indigo-500/30 min-w-[120px] max-w-[200px]"
+                            />
+                          );
+                        }
+                        return <span key={idx}>{part}</span>;
+                      })}
                     </div>
-                  ))}
+                  ) : (
+                    <div className="space-y-4">
+                      <p className="text-xs text-indigo-400 font-semibold">Completa los espacios requeridos:</p>
+                      {pregActual.espacios.map((esp: any) => (
+                        <div key={esp.id} className="space-y-1">
+                          <label className="block text-xs text-slate-400">Espacio #{esp.posicion}</label>
+                          <input
+                            type="text"
+                            value={respActual?.espacios?.[esp.posicion] || ''}
+                            onChange={(e) => handleEspacioCompletar(pregActual.id, esp.posicion, e.target.value)}
+                            placeholder="Escribe tu respuesta..."
+                            className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
