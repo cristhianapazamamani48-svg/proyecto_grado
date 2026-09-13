@@ -53,47 +53,19 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Right — Join form */}
+        {/* Right — Join entry point */}
         <div className="flex flex-col justify-center px-10 py-8 bg-slate-50 order-1 md:order-2">
           <div className="max-w-sm w-full mx-auto">
-            <h2 className="text-2xl font-bold text-slate-900 mb-1">Ingresar a una evaluación</h2>
+            <h2 className="text-2xl font-bold text-slate-900 mb-1">¿Vas a rendir una evaluación?</h2>
             <p className="text-slate-500 text-sm mb-8">
-              Introduce el código que te entregó tu docente y tu nombre completo.
+              Únete a la sala con el código que te entregó tu docente.
             </p>
-
-            <form action="/unirse" className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5">
-                  Código de sesión
-                </label>
-                <input
-                  type="text"
-                  name="codigo"
-                  maxLength={20}
-                  placeholder="Ej: ABC123"
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-center text-2xl font-mono font-bold tracking-[0.25em] text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all uppercase placeholder:text-slate-300 placeholder:text-base placeholder:tracking-normal"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5">
-                  Nombre completo
-                </label>
-                <input
-                  type="text"
-                  name="nombre"
-                  placeholder="Ej: Juan Pérez"
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-slate-800 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                />
-              </div>
-
-              <Link
-                href="/unirse"
-                className="block w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-full text-center shadow-lg shadow-blue-500/25 transition-colors mt-2"
-              >
-                Comenzar Evaluación →
-              </Link>
-            </form>
+            <Link
+              href="/unirse"
+              className="block w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-full text-center shadow-lg shadow-blue-500/25 transition-colors"
+            >
+              Unirse a sala →
+            </Link>
 
             <p className="mt-6 text-center text-xs text-slate-400">
               ¿Eres docente?{' '}

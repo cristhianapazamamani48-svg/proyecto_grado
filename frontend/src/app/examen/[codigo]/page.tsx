@@ -73,7 +73,6 @@ export default function ExamenPlayerPage() {
   // Estado de Guardado e Infracciones
   const [guardandoAvance, setGuardandoAvance] = useState(false);
   const [ultimoGuardado, setUltimoGuardado] = useState<Date | null>(null);
-  const [alertaMonitoreo, setAlertaMonitoreo] = useState<string | null>(null);
 
   const ultimoEventoRef = useRef<Record<string, number>>({});
   const timerTotalRef = useRef<NodeJS.Timeout | null>(null);
@@ -274,18 +273,6 @@ export default function ExamenPlayerPage() {
       if (now - last < 3000) return; // Debounce de 3 segundos
       ultimoEventoRef.current[tipo] = now;
 
-      // Mostrar alerta visual no invasiva
-      const nombresEventos: Record<string, string> = {
-        CAMBIO_PESTANA: 'Cambio de pestaña detectado',
-        PERDIDA_FOCO: 'Pérdida de foco de la ventana',
-        CLICK_DERECHO: 'Clic derecho bloqueado y registrado',
-        COPIAR: 'Intento de copiar texto registrado',
-        PEGAR: 'Intento de pegar texto registrado',
-        REDIMENSIONAR: 'Redimensionamiento de ventana registrado',
-      };
-      setAlertaMonitoreo(nombresEventos[tipo] || `Evento ${tipo} registrado`);
-      setTimeout(() => setAlertaMonitoreo(null), 4000);
-
       const token = localStorage.getItem('uub_guest_token');
       if (!token) return;
 
@@ -401,7 +388,7 @@ export default function ExamenPlayerPage() {
     }
   };
 
-  const handleSeleccionarOpcion = (preguntaId: string, opcionId: string, esMultiple: boolean) => {
+  const handleSeleccionarOpcion = (preguntaId: string, opcionId: string) => {
     // Si no se permite modificar y ya hay respuesta guardada
     if (!reglas.permitirModificar && respuestas[preguntaId]?.opciones?.length > 0) {
       return;
@@ -410,6 +397,8 @@ export default function ExamenPlayerPage() {
     const actual = respuestas[preguntaId] || { opciones: [] };
     let nuevasOpciones: string[] = [];
 
+    const pregunta = preguntas.find((item) => item.id === preguntaId);
+    const esMultiple = pregunta?.tipo === 'SELECCION_MULTIPLE';
     if (esMultiple) {
       if (actual.opciones.includes(opcionId)) {
         nuevasOpciones = actual.opciones.filter((id) => id !== opcionId);
@@ -645,14 +634,6 @@ export default function ExamenPlayerPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans select-none">
-      {/* Alerta de Infracción */}
-      {alertaMonitoreo && (
-        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 bg-amber-500 text-white font-bold text-xs rounded-full shadow-xl flex items-center gap-2 animate-bounce">
-          <span>⚠️</span>
-          <span>{alertaMonitoreo}</span>
-        </div>
-      )}
-
       {/* Header Bar */}
       <header className="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between sticky top-0 z-20 shadow-sm">
         <div className="flex items-center gap-4">
@@ -790,7 +771,7 @@ export default function ExamenPlayerPage() {
                       <button
                         key={opc.id}
                         type="button"
-                        onClick={() => handleSeleccionarOpcion(pregActual.id, opc.id, false)}
+                        onClick={() => handleSeleccionarOpcion(pregActual.id, opc.id)}
                         className={`w-full p-4 rounded-2xl border text-left flex items-center justify-between transition-all ${
                           seleccionada
                             ? 'bg-blue-50 border-blue-500 text-blue-900 font-semibold shadow-sm'
@@ -821,7 +802,7 @@ export default function ExamenPlayerPage() {
                       <button
                         key={opc.id}
                         type="button"
-                        onClick={() => handleSeleccionarOpcion(pregActual.id, opc.id, true)}
+                        onClick={() => handleSeleccionarOpcion(pregActual.id, opc.id)}
                         className={`w-full p-4 rounded-2xl border text-left flex items-center justify-between transition-all ${
                           seleccionada
                             ? 'bg-blue-50 border-blue-500 text-blue-900 font-semibold shadow-sm'
