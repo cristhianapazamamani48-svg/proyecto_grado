@@ -8,6 +8,10 @@ const nextConfig: NextConfig = {
         source: "/api/:path*",
         destination: "http://backend:3001/:path*",
       },
+      {
+        source: "/socket.io/:path*",
+        destination: "http://backend:3001/socket.io/:path*",
+      },
     ];
   },
 };

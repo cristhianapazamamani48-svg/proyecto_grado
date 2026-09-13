@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException, Patch, Param } from '@nestjs/common';
 import { SesionesService } from './sesiones.service';
 import { AuthGuard } from '@nestjs/passport';
+import { TipoEventoMonitoreo } from '@prisma/client';
 
 @Controller('sesiones')
 export class SesionesController {
@@ -74,7 +75,17 @@ export class SesionesController {
 
   @UseGuards(AuthGuard('jwt'))
   @Post('intento/respuesta')
-  async guardarRespuesta(@Request() req: any, @Body() body: { intentoId: string; preguntaId: string; opcionesSeleccionadas?: string[]; textoRespuesta?: string; espaciosRespuestas?: Record<string, string> }) {
+  async guardarRespuesta(
+    @Request() req: any,
+    @Body()
+    body: {
+      intentoId: string;
+      preguntaId: string;
+      opcionesSeleccionadas?: string[];
+      textoRespuesta?: string;
+      espaciosRespuestas?: Record<string, string>;
+    },
+  ) {
     this.requiereParticipante(req.user);
     return this.sesionesService.guardarRespuesta(Number(req.user.sub), body);
   }
@@ -84,6 +95,31 @@ export class SesionesController {
   async finalizarIntento(@Request() req: any, @Body() body: { intentoId: string }) {
     this.requiereParticipante(req.user);
     return this.sesionesService.finalizarIntento(Number(req.user.sub), body.intentoId);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Post('monitoreo/evento')
+  async registrarEventoMonitoreo(
+    @Request() req: any,
+    @Body() body: { tipo: TipoEventoMonitoreo; detalle?: string },
+  ) {
+    this.requiereParticipante(req.user);
+    return this.sesionesService.registrarEventoMonitoreo(Number(req.user.sub), body);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Patch('respuestas/:idRespuesta/calificar')
+  async calificarRespuesta(
+    @Request() req: any,
+    @Param('idRespuesta') idRespuesta: string,
+    @Body() body: { puntaje: number; comentario?: string },
+  ) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.calificarRespuestaAbierta(
+      Number(req.user.sub),
+      Number(idRespuesta),
+      body,
+    );
   }
 
   private requiereDocente(user: { tipo?: string }) {
