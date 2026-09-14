@@ -44,113 +44,212 @@ export default function DocenteLoginPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 flex">
-      {/* Panel izquierdo decorativo */}
-      <div className="hidden lg:flex flex-col justify-between w-1/2 bg-gradient-to-br from-blue-500 to-indigo-600 p-16 text-white">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center font-bold text-xl">U</div>
-          <span className="text-2xl font-bold tracking-tight">UUB</span>
-        </div>
-        <div className="space-y-6">
-          <h2 className="text-4xl font-bold leading-tight">
-            Evaluaciones académicas<br />modernas y confiables
-          </h2>
-          <p className="text-blue-100 leading-relaxed max-w-sm">
-            Crea, gestiona y califica evaluaciones con soporte para múltiples tipos de preguntas, sesiones en tiempo real y monitoreo de participantes.
-          </p>
-        </div>
-        <p className="text-blue-200 text-sm">Proyecto de Grado · UUB</p>
-      </div>
+    <div className="min-h-screen bg-indigo-50/40 flex items-center justify-center p-4 sm:p-6 font-sans">
+      {/* Outer Card Container */}
+      <div className="w-full max-w-4xl bg-white rounded-[32px] shadow-2xl shadow-indigo-500/10 border border-slate-100 overflow-hidden min-h-[540px] flex flex-col md:flex-row relative transition-all duration-500">
+        
+        {/* VIEW 1: LOGIN MODE (Form on Left, Diagonal Purple on Right) */}
+        {!esRegistro ? (
+          <>
+            {/* Form Area (Left) */}
+            <div className="w-full md:w-7/12 p-8 sm:p-12 flex flex-col justify-center z-10">
+              <div className="max-w-md w-full mx-auto space-y-6">
+                <div>
+                  <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Login</h1>
+                  <p className="text-xs text-slate-400 mt-1">Accede a tu panel docente de evaluaciones</p>
+                </div>
 
-      {/* Panel derecho: formulario */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-md space-y-8">
-          {/* Logo mobile */}
-          <div className="lg:hidden flex items-center gap-2 mb-4">
-            <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">U</div>
-            <span className="text-xl font-bold text-slate-900">UUB</span>
-          </div>
+                {error && (
+                  <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-2xl">
+                    {error}
+                  </div>
+                )}
 
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900 tracking-tight">
-              {esRegistro ? 'Crear cuenta' : 'Iniciar sesión'}
-            </h1>
-            <p className="text-slate-500 mt-2 text-sm">
-              {esRegistro ? 'Regístrate como docente para comenzar.' : 'Accede a tu panel de evaluaciones.'}
-            </p>
-          </div>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  {/* Email */}
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <input
+                      type="email"
+                      required
+                      placeholder="Email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+                    />
+                  </div>
 
-          {error && (
-            <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-2xl">
-              {error}
-            </div>
-          )}
+                  {/* Password */}
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    </div>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+                    />
+                  </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {esRegistro && (
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Nombre Completo</label>
-                <input
-                  type="text"
-                  required
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
-                  placeholder="Prof. Carlos Ruiz"
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-slate-800 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                />
+                  {/* Login Button */}
+                  <button
+                    type="submit"
+                    disabled={cargando}
+                    className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-indigo-600/25 cursor-pointer mt-2"
+                  >
+                    {cargando ? 'Procesando...' : 'Login'}
+                  </button>
+                </form>
+
+                <div className="pt-2 text-center">
+                  <Link href="/" className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                    ← Volver al inicio
+                  </Link>
+                </div>
               </div>
-            )}
-
-            <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Correo Electrónico</label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="docente@institucion.edu"
-                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-slate-800 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-              />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Contraseña</label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-slate-800 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-              />
+            {/* Diagonal Side (Right) */}
+            <div className="w-full md:w-5/12 bg-indigo-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto">
+              <div className="relative z-10 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setEsRegistro(true); setError(''); }}
+                  className="px-5 py-2 rounded-full border border-white/40 hover:border-white text-white font-medium text-xs tracking-wide transition-all backdrop-blur-sm hover:bg-white/10 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>Sign up</span>
+                  <span>→</span>
+                </button>
+              </div>
+
+              <div className="relative z-10 space-y-2 mt-auto">
+                <h3 className="text-2xl font-bold tracking-tight">¿No tienes cuenta?</h3>
+                <p className="text-xs text-indigo-100 leading-relaxed max-w-xs">
+                  Regístrate como docente para crear y calificar evaluaciones académicas con IA.
+                </p>
+              </div>
+            </div>
+          </>
+        ) : (
+          /* VIEW 2: SIGN UP MODE (Diagonal Purple on Left, Form on Right) */
+          <>
+            {/* Diagonal Side (Left) */}
+            <div className="w-full md:w-5/12 bg-indigo-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto order-2 md:order-1">
+              <div className="relative z-10 flex justify-start">
+                <button
+                  type="button"
+                  onClick={() => { setEsRegistro(false); setError(''); }}
+                  className="px-5 py-2 rounded-full border border-white/40 hover:border-white text-white font-medium text-xs tracking-wide transition-all backdrop-blur-sm hover:bg-white/10 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>Login</span>
+                  <span>→</span>
+                </button>
+              </div>
+
+              <div className="relative z-10 space-y-2 mt-auto">
+                <h3 className="text-2xl font-bold tracking-tight">¿Ya tienes cuenta?</h3>
+                <p className="text-xs text-indigo-100 leading-relaxed max-w-xs">
+                  Inicia sesión con tus credenciales docente para acceder a tus evaluaciones.
+                </p>
+              </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={cargando}
-              className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-full shadow-lg shadow-blue-500/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {cargando ? 'Procesando...' : esRegistro ? 'Crear cuenta' : 'Iniciar Sesión'}
-            </button>
-          </form>
+            {/* Form Area (Right) */}
+            <div className="w-full md:w-7/12 p-8 sm:p-12 flex flex-col justify-center z-10 order-1 md:order-2">
+              <div className="max-w-md w-full mx-auto space-y-6">
+                <div>
+                  <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Sign up</h1>
+                  <p className="text-xs text-slate-400 mt-1">Crea tu cuenta de docente en Proyecto UUB</p>
+                </div>
 
-          <div className="text-center">
-            <button
-              type="button"
-              onClick={() => { setEsRegistro(!esRegistro); setError(''); }}
-              className="text-sm text-blue-600 hover:text-blue-700 font-medium hover:underline transition-colors"
-            >
-              {esRegistro ? '¿Ya tienes cuenta? Inicia Sesión' : '¿No tienes cuenta? Regístrate'}
-            </button>
-          </div>
+                {error && (
+                  <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-2xl">
+                    {error}
+                  </div>
+                )}
 
-          <div className="text-center">
-            <Link href="/" className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
-              ← Volver al inicio
-            </Link>
-          </div>
-        </div>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  {/* Name */}
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Nombre Completo"
+                      value={nombre}
+                      onChange={(e) => setNombre(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+                    />
+                  </div>
+
+                  {/* Email */}
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <input
+                      type="email"
+                      required
+                      placeholder="Email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+                    />
+                  </div>
+
+                  {/* Password */}
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    </div>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+                    />
+                  </div>
+
+                  {/* Sign Up Button */}
+                  <button
+                    type="submit"
+                    disabled={cargando}
+                    className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-indigo-600/25 cursor-pointer mt-2"
+                  >
+                    {cargando ? 'Procesando...' : 'Sign up'}
+                  </button>
+                </form>
+
+                <div className="pt-2 text-center">
+                  <Link href="/" className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                    ← Volver al inicio
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
       </div>
-    </main>
+    </div>
   );
 }
