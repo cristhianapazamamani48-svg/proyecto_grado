@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { EstadoEvaluacion, TipoPregunta, ModoCalificacionEspacio, ModoInicioSesion } from '@prisma/client';
+import { EstadoEvaluacion, TipoPregunta, ModoCalificacionEspacio, ModoInicioSesion, EstadoParticipante } from '@prisma/client';
 
 export interface CrearPreguntaDto {
   tipo: TipoPregunta;
@@ -51,6 +51,99 @@ export class EvaluacionesService {
     });
   }
 
+  async obtenerReporteGeneral(idUsuario: number) {
+    const evaluaciones = await this.prisma.evaluacion.findMany({
+      where: { idUsuario },
+      include: {
+        preguntas: { select: { idPregunta: true, puntaje: true } },
+        sesiones: {
+          orderBy: { fechaInicio: 'desc' },
+          include: {
+            participantes: {
+              select: {
+                idParticipante: true,
+                nombre: true,
+                estado: true,
+                puntajeTotal: true,
+                porcentaje: true,
+                fechaIngreso: true,
+                fechaFinalizacion: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { fechaActualizacion: 'desc' },
+    });
+
+    return evaluaciones.map((ev) => {
+      const totalSesiones = ev.sesiones.length;
+      let totalParticipantes = 0;
+      let finalizados = 0;
+      const porcentajesFinalizados: number[] = [];
+
+      const sesionesResumen = ev.sesiones.map((s) => {
+        const partCount = s.participantes.length;
+        const partFinalizados = s.participantes.filter((p) => p.estado === EstadoParticipante.FINALIZADO);
+        const porcentajes = partFinalizados
+          .map((p) => (p.porcentaje !== null ? Number(p.porcentaje) : null))
+          .filter((v): v is number => v !== null);
+
+        const promSesion =
+          porcentajes.length > 0
+            ? porcentajes.reduce((a, b) => a + b, 0) / porcentajes.length
+            : 0;
+
+        totalParticipantes += partCount;
+        finalizados += partFinalizados.length;
+        porcentajesFinalizados.push(...porcentajes);
+
+        return {
+          idSesion: s.idSesion,
+          codigo: s.codigo,
+          estado: s.estado,
+          fechaInicio: s.fechaInicio,
+          fechaFin: s.fechaFin,
+          totalParticipantes: partCount,
+          finalizados: partFinalizados.length,
+          promedioPorcentaje: Math.round(promSesion * 10) / 10,
+        };
+      });
+
+      const promedioGeneral =
+        porcentajesFinalizados.length > 0
+          ? Math.round(
+              (porcentajesFinalizados.reduce((a, b) => a + b, 0) / porcentajesFinalizados.length) * 10,
+            ) / 10
+          : 0;
+
+      const mejorResultado =
+        porcentajesFinalizados.length > 0 ? Math.max(...porcentajesFinalizados) : null;
+      const menorResultado =
+        porcentajesFinalizados.length > 0 ? Math.min(...porcentajesFinalizados) : null;
+
+      const puntajeMaximo = ev.preguntas.reduce((a, b) => a + Number(b.puntaje), 0);
+
+      return {
+        idEvaluacion: ev.idEvaluacion,
+        nombre: ev.nombre,
+        descripcion: ev.descripcion,
+        estado: ev.estado,
+        totalPreguntas: ev.preguntas.length,
+        puntajeMaximo,
+        fechaCreacion: ev.fechaCreacion,
+        fechaActualizacion: ev.fechaActualizacion,
+        totalSesiones,
+        totalParticipantes,
+        finalizados,
+        promedioGeneral,
+        mejorResultado,
+        menorResultado,
+        sesiones: sesionesResumen,
+      };
+    });
+  }
+
   async obtenerPorId(idEvaluacion: number, idUsuario: number) {
     const evaluacion = await this.prisma.evaluacion.findUnique({
       where: { idEvaluacion },
@@ -80,7 +173,7 @@ export class EvaluacionesService {
           nombre: dto.nombre,
           descripcion: dto.descripcion,
           estado: EstadoEvaluacion.BORRADOR,
-          ...this.mapConfiguracion(dto)
+          ...this.mapConfiguracion(dto),
         },
       });
 
@@ -92,57 +185,42 @@ export class EvaluacionesService {
   async actualizarEvaluacion(idEvaluacion: number, idUsuario: number, dto: CrearEvaluacionDto) {
     const evaluacion = await this.prisma.evaluacion.findUnique({
       where: { idEvaluacion },
-      include: { sesiones: { include: { participantes: { select: { idParticipante: true } } } } }
+      include: { sesiones: { include: { participantes: { select: { idParticipante: true } } } } },
     });
 
     if (!evaluacion || evaluacion.idUsuario !== idUsuario) {
       throw new NotFoundException('Evaluación no encontrada.');
     }
 
-    if (evaluacion.estado === EstadoEvaluacion.PUBLICADA) {
-      const tieneParticipantes = evaluacion.sesiones.some(s => s.participantes.length > 0);
-      if (tieneParticipantes) {
-        throw new BadRequestException('No se puede editar una evaluación publicada que ya tiene respuestas. Por favor, duplica la evaluación.');
-      }
+    const tieneRespuestas = evaluacion.sesiones.some((s) => s.participantes.length > 0);
+    if (evaluacion.estado === EstadoEvaluacion.PUBLICADA && tieneRespuestas) {
+      throw new BadRequestException(
+        'No se puede editar la estructura de una evaluación publicada con respuestas. Por favor duplícala para crear una nueva versión.',
+      );
     }
 
     return this.prisma.$transaction(async (tx) => {
+      await tx.pregunta.deleteMany({ where: { idEvaluacion } });
+
       const actualizada = await tx.evaluacion.update({
         where: { idEvaluacion },
         data: {
           nombre: dto.nombre,
           descripcion: dto.descripcion,
-          ...this.mapConfiguracion(dto)
+          ...this.mapConfiguracion(dto),
         },
       });
 
-      await tx.pregunta.deleteMany({ where: { idEvaluacion } });
       await this.insertarPreguntas(tx, idEvaluacion, dto.preguntas);
-
       return actualizada;
     });
   }
 
   async duplicarEvaluacion(idEvaluacion: number, idUsuario: number) {
     const original = await this.obtenerPorId(idEvaluacion, idUsuario);
-    
-    const preguntasDto: CrearPreguntaDto[] = original.preguntas.map(p => ({
-      tipo: p.tipo,
-      enunciado: p.enunciado,
-      imagen: p.imagen || undefined,
-      puntaje: Number(p.puntaje),
-      orden: p.orden,
-      opciones: p.opciones?.map(o => ({ texto: o.texto, esCorrecta: o.esCorrecta })),
-      espacios: p.espacios?.map(e => ({
-        numeroEspacio: e.numeroEspacio,
-        ignorarMayusculas: e.ignorarMayusculas,
-        modoCalificacion: e.modoCalificacion,
-        respuestasValidas: e.respuestasValidas.map(rv => rv.respuesta)
-      }))
-    }));
 
     const dto: CrearEvaluacionDto = {
-      nombre: original.nombre + ' (Copia)',
+      nombre: `${original.nombre} (Copia)`,
       descripcion: original.descripcion || undefined,
       tiempoTotal: original.tiempoTotal || undefined,
       tiempoPorPregunta: original.tiempoPorPregunta || undefined,
@@ -160,34 +238,49 @@ export class EvaluacionesService {
       detectarPegar: original.detectarPegar,
       detectarRedimensionar: original.detectarRedimensionar,
       modoInicio: original.modoInicio,
-      fechaInicio: original.fechaInicio ? original.fechaInicio.toISOString() : undefined,
-      fechaFin: original.fechaFin ? original.fechaFin.toISOString() : undefined,
-      preguntas: preguntasDto
+      preguntas: original.preguntas.map((p) => ({
+        tipo: p.tipo,
+        enunciado: p.enunciado,
+        imagen: p.imagen || undefined,
+        puntaje: Number(p.puntaje),
+        orden: p.orden,
+        opciones: p.opciones.map((o) => ({ texto: o.texto, esCorrecta: o.esCorrecta })),
+        espacios: p.espacios.map((e) => ({
+          numeroEspacio: e.numeroEspacio,
+          ignorarMayusculas: e.ignorarMayusculas,
+          modoCalificacion: e.modoCalificacion,
+          respuestasValidas: e.respuestasValidas.map((rv) => rv.respuesta),
+        })),
+      })),
     };
 
     return this.crearEvaluacion(idUsuario, dto);
   }
 
-  async cambiarEstado(idEvaluacion: number, idUsuario: number, estado: EstadoEvaluacion) {
+  async cambiarEstado(idEvaluacion: number, idUsuario: number, nuevoEstado: EstadoEvaluacion) {
     const evaluacion = await this.prisma.evaluacion.findUnique({ where: { idEvaluacion } });
-    if (!evaluacion || evaluacion.idUsuario !== idUsuario) throw new NotFoundException('Evaluación no encontrada.');
+    if (!evaluacion || evaluacion.idUsuario !== idUsuario) {
+      throw new NotFoundException('Evaluación no encontrada.');
+    }
 
     return this.prisma.evaluacion.update({
       where: { idEvaluacion },
-      data: { estado }
+      data: { estado: nuevoEstado },
     });
   }
 
   async eliminarEvaluacion(idEvaluacion: number, idUsuario: number) {
     const evaluacion = await this.prisma.evaluacion.findUnique({
       where: { idEvaluacion },
-      include: { _count: { select: { sesiones: true } } }
+      include: { sesiones: true },
     });
-    
-    if (!evaluacion || evaluacion.idUsuario !== idUsuario) throw new NotFoundException('Evaluación no encontrada.');
-    
-    if (evaluacion.estado === EstadoEvaluacion.PUBLICADA && evaluacion._count.sesiones > 0) {
-       throw new BadRequestException('No se puede eliminar una evaluación publicada con sesiones. Archívala en su lugar.');
+
+    if (!evaluacion || evaluacion.idUsuario !== idUsuario) {
+      throw new NotFoundException('Evaluación no encontrada.');
+    }
+
+    if (evaluacion.estado === EstadoEvaluacion.PUBLICADA && evaluacion.sesiones.length > 0) {
+      throw new BadRequestException('No se puede eliminar una evaluación publicada con sesiones. Archívala en su lugar.');
     }
 
     return this.prisma.evaluacion.delete({ where: { idEvaluacion } });

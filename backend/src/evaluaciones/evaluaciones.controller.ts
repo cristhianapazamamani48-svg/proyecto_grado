@@ -18,6 +18,12 @@ export class EvaluacionesController {
     return this.evaluacionesService.listarPorDocente(Number(req.user.sub));
   }
 
+  @Get('reportes/general')
+  async obtenerReporteGeneral(@Request() req: any) {
+    this.requiereDocente(req.user);
+    return this.evaluacionesService.obtenerReporteGeneral(Number(req.user.sub));
+  }
+
   @Get(':id')
   async obtenerPorId(@Param('id') id: string, @Request() req: any) {
     this.requiereDocente(req.user);
