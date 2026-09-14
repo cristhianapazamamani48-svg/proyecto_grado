@@ -5,6 +5,8 @@ import { AuthModule } from './auth/auth.module';
 import { EvaluacionesModule } from './evaluaciones/evaluaciones.module';
 import { SesionesModule } from './sesiones/sesiones.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { AiModule } from './ai/ai.module';
+import { OrganizacionModule } from './organizacion/organizacion.module';
 
 @Module({
   imports: [
@@ -14,6 +16,8 @@ import { RealtimeModule } from './realtime/realtime.module';
     EvaluacionesModule,
     SesionesModule,
     RealtimeModule,
+    AiModule,
+    OrganizacionModule,
   ],
 })
 export class AppModule {}

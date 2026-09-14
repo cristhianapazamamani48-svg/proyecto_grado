@@ -27,6 +27,14 @@ const TIPO_EVENTO_LABEL: Record<string, { label: string; icon: string }> = {
   REDIMENSIONAR: { label: 'Redimensionamiento', icon: '📐' },
 };
 
+const ESTADO_IA_BADGE: Record<string, { label: string; color: string }> = {
+  PENDIENTE: { label: 'Pendiente de IA', color: 'bg-slate-100 text-slate-600 border-slate-200' },
+  SUGERIDA: { label: '🤖 IA Sugerida', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  ACEPTADA: { label: '✓ IA Aceptada', color: 'bg-green-50 text-green-700 border-green-200' },
+  MODIFICADA: { label: '✎ Modificada por Docente', color: 'bg-blue-50 text-blue-700 border-blue-200' },
+  RECHAZADA: { label: '✕ IA Rechazada', color: 'bg-red-50 text-red-700 border-red-200' },
+};
+
 export default function ReporteSesionPage() {
   const router = useRouter();
   const params = useParams();
@@ -38,9 +46,9 @@ export default function ReporteSesionPage() {
   const [tabActiva, setTabActiva] = useState<'RESULTADOS' | 'ABIERTAS' | 'MONITOREO'>('RESULTADOS');
   const [participanteExpandido, setParticipanteExpandido] = useState<number | null>(null);
 
-  // Estados para corrección manual
+  // Estados para corrección manual y de IA
   const [calificacionesForm, setCalificacionesForm] = useState<
-    Record<number, { puntaje: number | ''; comentario: string; guardando?: boolean; exito?: boolean }>
+    Record<number, { puntaje: number | ''; comentario: string; guardando?: boolean; analizandoIa?: boolean; exito?: boolean }>
   >({});
 
   // Filtros de monitoreo
@@ -72,7 +80,7 @@ export default function ReporteSesionPage() {
           if (r.tipo === 'ABIERTA' && r.idRespuesta) {
             forms[r.idRespuesta] = {
               puntaje: r.puntajeObtenido !== null ? r.puntajeObtenido : '',
-              comentario: r.comentarioDocente || '',
+              comentario: r.comentarioDocente || r.comentarioIa || '',
             };
           }
         });
@@ -89,7 +97,70 @@ export default function ReporteSesionPage() {
     cargar();
   }, [cargar]);
 
-  const handleGuardarCalificacion = async (idRespuesta: number) => {
+  const handleAnalizarIA = async (idRespuesta: number) => {
+    const token = getToken();
+    if (!token) return;
+
+    setCalificacionesForm((prev) => ({
+      ...prev,
+      [idRespuesta]: { ...prev[idRespuesta], analizandoIa: true },
+    }));
+
+    try {
+      const res = await fetch(`${API}/sesiones/respuestas/${idRespuesta}/analizar-ia`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.message || 'Error al analizar la respuesta con IA.');
+        return;
+      }
+
+      await cargar();
+    } catch {
+      alert('Error de conexión con el servicio de IA.');
+    } finally {
+      setCalificacionesForm((prev) => ({
+        ...prev,
+        [idRespuesta]: { ...prev[idRespuesta], analizandoIa: false },
+      }));
+    }
+  };
+
+  const handleAceptarIA = async (idRespuesta: number) => {
+    const token = getToken();
+    if (!token) return;
+
+    setCalificacionesForm((prev) => ({
+      ...prev,
+      [idRespuesta]: { ...prev[idRespuesta], guardando: true },
+    }));
+
+    try {
+      const res = await fetch(`${API}/sesiones/respuestas/${idRespuesta}/aceptar-ia`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        alert('Error al aceptar la sugerencia de IA.');
+        return;
+      }
+
+      await cargar();
+    } catch {
+      alert('Error de conexión.');
+    } finally {
+      setCalificacionesForm((prev) => ({
+        ...prev,
+        [idRespuesta]: { ...prev[idRespuesta], guardando: false },
+      }));
+    }
+  };
+
+  const handleModificarIA = async (idRespuesta: number) => {
     const form = calificacionesForm[idRespuesta];
     if (!form || form.puntaje === '') return;
 
@@ -102,8 +173,8 @@ export default function ReporteSesionPage() {
     }));
 
     try {
-      const res = await fetch(`${API}/sesiones/respuestas/${idRespuesta}/calificar`, {
-        method: 'PATCH',
+      const res = await fetch(`${API}/sesiones/respuestas/${idRespuesta}/modificar-ia`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
@@ -115,19 +186,45 @@ export default function ReporteSesionPage() {
       });
 
       if (!res.ok) {
-        alert('Error al guardar la calificación.');
+        alert('Error al guardar las modificaciones.');
         return;
       }
 
-      setCalificacionesForm((prev) => ({
-        ...prev,
-        [idRespuesta]: { ...prev[idRespuesta], guardando: false, exito: true },
-      }));
-
-      // Recargar reporte para actualizar promedios y notas
       await cargar();
     } catch {
       alert('Error de conexión.');
+    } finally {
+      setCalificacionesForm((prev) => ({
+        ...prev,
+        [idRespuesta]: { ...prev[idRespuesta], guardando: false },
+      }));
+    }
+  };
+
+  const handleRechazarIA = async (idRespuesta: number) => {
+    const token = getToken();
+    if (!token) return;
+
+    setCalificacionesForm((prev) => ({
+      ...prev,
+      [idRespuesta]: { ...prev[idRespuesta], guardando: true },
+    }));
+
+    try {
+      const res = await fetch(`${API}/sesiones/respuestas/${idRespuesta}/rechazar-ia`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        alert('Error al rechazar la sugerencia.');
+        return;
+      }
+
+      await cargar();
+    } catch {
+      alert('Error de conexión.');
+    } finally {
       setCalificacionesForm((prev) => ({
         ...prev,
         [idRespuesta]: { ...prev[idRespuesta], guardando: false },
@@ -291,7 +388,7 @@ export default function ReporteSesionPage() {
                 : 'border-transparent text-slate-400 hover:text-slate-700'
             }`}
           >
-            <span>📝 Corrección de Respuestas Abiertas</span>
+            <span>🤖 Corrección Asistida por IA</span>
             {resumen?.totalAbiertasPendientes > 0 && (
               <span className="w-5 h-5 bg-amber-500 text-white rounded-full text-[10px] flex items-center justify-center font-bold">
                 {resumen.totalAbiertasPendientes}
@@ -306,7 +403,7 @@ export default function ReporteSesionPage() {
                 : 'border-transparent text-slate-400 hover:text-slate-700'
             }`}
           >
-            🛡️ Registro de Monitoreo e Integridad ({todosLosEventos.length})
+            🛡️ Monitoreo e Integridad ({todosLosEventos.length})
           </button>
         </div>
 
@@ -441,9 +538,21 @@ export default function ReporteSesionPage() {
           </div>
         )}
 
-        {/* TAB 2: CORRECCIÓN DE RESPUESTAS ABIERTAS */}
+        {/* TAB 2: CORRECCIÓN ASISTIDA POR IA */}
         {tabActiva === 'ABIERTAS' && (
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {/* Banner Informativo Human-in-the-loop */}
+            <div className="bg-blue-50 border border-blue-200 rounded-3xl p-5 flex items-start gap-4 shadow-sm">
+              <span className="text-2xl">🤖</span>
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-blue-900">Asistente de Evaluación con Inteligencia Artificial</p>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  La IA analiza el contenido de las respuestas abiertas y sugiere un puntaje y retroalimentación preliminares.
+                  <strong> La calificación final y la decisión siempre corresponden únicamente al docente.</strong>
+                </p>
+              </div>
+            </div>
+
             {listaRespuestasAbiertas.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center text-slate-400 text-xs">
                 Esta evaluación no incluye preguntas de respuesta abierta.
@@ -451,29 +560,27 @@ export default function ReporteSesionPage() {
             ) : (
               listaRespuestasAbiertas.map((item) => {
                 const form = calificacionesForm[item.idRespuesta] || { puntaje: '', comentario: '' };
+                const estadoBadge = ESTADO_IA_BADGE[item.estadoRevisionIa] || ESTADO_IA_BADGE.PENDIENTE;
 
                 return (
                   <div
                     key={item.idRespuesta}
-                    className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4"
+                    className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-5"
                   >
                     <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                      <div>
+                      <div className="flex items-center gap-3">
                         <span className="font-bold text-slate-900 text-sm">{item.nombreParticipante}</span>
-                        <span className="text-slate-400 mx-2">·</span>
+                        <span className="text-slate-300">·</span>
                         <span className="text-xs font-semibold text-slate-500">
-                          Puntaje máximo: {item.puntajeMaximo} pts
+                          Puntaje Máximo: {item.puntajeMaximo} pts
                         </span>
                       </div>
-                      <span
-                        className={`px-3 py-1 text-xs font-bold rounded-full ${
-                          item.corregidoDocente
-                            ? 'bg-green-50 text-green-700 border border-green-200'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}
-                      >
-                        {item.corregidoDocente ? '✓ Corregida' : '⏳ Pendiente'}
-                      </span>
+
+                      <div className="flex items-center gap-2">
+                        <span className={`px-3 py-1 text-xs font-bold rounded-full border ${estadoBadge.color}`}>
+                          {estadoBadge.label}
+                        </span>
+                      </div>
                     </div>
 
                     <div>
@@ -481,6 +588,7 @@ export default function ReporteSesionPage() {
                       <p className="text-sm font-semibold text-slate-800 mt-0.5">{item.enunciado}</p>
                     </div>
 
+                    {/* Respuesta del Estudiante */}
                     <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl">
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
                         Respuesta del Estudiante
@@ -490,11 +598,113 @@ export default function ReporteSesionPage() {
                       </p>
                     </div>
 
-                    {/* Formulario de Calificación */}
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end pt-2">
+                    {/* Tarjeta de Análisis de IA (Si existe o botón para solicitar) */}
+                    {item.puntajeSugeridoIa !== null ? (
+                      <div className="bg-purple-50/70 border border-purple-200 rounded-2xl p-5 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">🤖</span>
+                            <span className="font-bold text-purple-900 text-sm">Sugerencia de Inteligencia Artificial</span>
+                            {item.confianzaIa && (
+                              <span className="text-[11px] font-bold text-purple-700 bg-purple-100 border border-purple-300 px-2.5 py-0.5 rounded-full">
+                                Confianza: {Math.round(item.confianzaIa * 100)}%
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-lg font-black text-purple-900">
+                            {item.puntajeSugeridoIa} / {item.puntajeMaximo} pts
+                          </span>
+                        </div>
+
+                        {item.justificacionIa && (
+                          <p className="text-xs text-purple-800 leading-relaxed">
+                            <strong>Justificación:</strong> {item.justificacionIa}
+                          </p>
+                        )}
+
+                        {/* Fortalezas y Faltantes */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                          {item.fortalezasIa?.length > 0 && (
+                            <div className="bg-white/80 border border-green-200 rounded-xl p-3">
+                              <p className="font-bold text-green-700 mb-1">💪 Fortalezas identificadas:</p>
+                              <ul className="list-disc list-inside text-slate-700 space-y-0.5">
+                                {item.fortalezasIa.map((f: string, i: number) => (
+                                  <li key={i}>{f}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {item.faltantesIa?.length > 0 && (
+                            <div className="bg-white/80 border border-amber-200 rounded-xl p-3">
+                              <p className="font-bold text-amber-700 mb-1">🔍 Aspectos a mejorar:</p>
+                              <ul className="list-disc list-inside text-slate-700 space-y-0.5">
+                                {item.faltantesIa.map((f: string, i: number) => (
+                                  <li key={i}>{f}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+
+                        {item.comentarioIa && (
+                          <div className="text-xs text-purple-900 bg-white/60 p-3 rounded-xl border border-purple-200">
+                            <strong>Retroalimentación sugerida:</strong> {item.comentarioIa}
+                          </div>
+                        )}
+
+                        {/* Acciones de IA */}
+                        <div className="flex flex-wrap items-center gap-3 pt-1">
+                          <button
+                            type="button"
+                            disabled={form.guardando}
+                            onClick={() => handleAceptarIA(item.idRespuesta)}
+                            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold text-xs rounded-xl shadow-sm transition-colors disabled:opacity-40"
+                          >
+                            ✓ Aceptar Sugerencia ({item.puntajeSugeridoIa} pts)
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={form.guardando}
+                            onClick={() => handleRechazarIA(item.idRespuesta)}
+                            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors disabled:opacity-40"
+                          >
+                            ✕ Rechazar Sugerencia
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={form.analizandoIa}
+                            onClick={() => handleAnalizarIA(item.idRespuesta)}
+                            className="px-3 py-2 text-purple-700 hover:bg-purple-100 font-bold text-xs rounded-xl transition-colors disabled:opacity-40 ml-auto"
+                          >
+                            {form.analizandoIa ? 'Re-analizando...' : '↻ Volver a analizar'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between p-4 bg-slate-50 border border-dashed border-slate-300 rounded-2xl">
+                        <div className="space-y-0.5">
+                          <p className="text-xs font-bold text-slate-700">Respuesta aún no analizada por IA</p>
+                          <p className="text-[11px] text-slate-400">Genera una evaluación previa automática en segundos.</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={form.analizandoIa}
+                          onClick={() => handleAnalizarIA(item.idRespuesta)}
+                          className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-md shadow-purple-500/20 transition-colors disabled:opacity-40"
+                        >
+                          {form.analizandoIa ? 'Analizando con IA...' : '🤖 Analizar con IA'}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Formulario de Modificación / Calificación Docente Manual */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end pt-2 border-t border-slate-100">
                       <div className="md:col-span-3">
                         <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                          Puntaje Asignado (0 a {item.puntajeMaximo})
+                          Puntaje Final Asignado
                         </label>
                         <input
                           type="number"
@@ -518,7 +728,7 @@ export default function ReporteSesionPage() {
 
                       <div className="md:col-span-6">
                         <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                          Comentario / Retroalimentación
+                          Comentario / Retroalimentación Docente
                         </label>
                         <input
                           type="text"
@@ -529,7 +739,7 @@ export default function ReporteSesionPage() {
                               [item.idRespuesta]: { ...prev[item.idRespuesta], comentario: e.target.value },
                             }))
                           }
-                          placeholder="Observaciones o correcciones para el estudiante..."
+                          placeholder="Observaciones o correcciones del docente..."
                           className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-none focus:border-blue-500"
                         />
                       </div>
@@ -538,10 +748,10 @@ export default function ReporteSesionPage() {
                         <button
                           type="button"
                           disabled={form.guardando || form.puntaje === ''}
-                          onClick={() => handleGuardarCalificacion(item.idRespuesta)}
+                          onClick={() => handleModificarIA(item.idRespuesta)}
                           className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/25 transition-colors disabled:opacity-40"
                         >
-                          {form.guardando ? 'Guardando...' : form.exito ? '✓ Calificado' : 'Guardar Calificación'}
+                          {form.guardando ? 'Guardando...' : '✎ Modificar y Guardar'}
                         </button>
                       </div>
                     </div>

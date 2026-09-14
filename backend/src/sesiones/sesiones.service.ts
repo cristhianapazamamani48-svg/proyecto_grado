@@ -3,12 +3,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CalificacionService } from '../calificacion/calificacion.service';
 import { JwtService } from '@nestjs/jwt';
 import { EvaluacionGateway } from '../realtime/evaluacion.gateway';
+import { AiService } from '../ai/ai.service';
 import {
   EstadoSesion,
   EstadoParticipante,
   TipoPregunta,
   EstadoEvaluacion,
   TipoEventoMonitoreo,
+  EstadoRevisionIa,
 } from '@prisma/client';
 
 export interface CrearSesionDto {
@@ -25,6 +27,7 @@ export class SesionesService {
     private readonly calificacionService: CalificacionService,
     private readonly jwtService: JwtService,
     private readonly gateway: EvaluacionGateway,
+    private readonly aiService: AiService,
   ) {}
 
   private generarCodigoUnico(): string {
@@ -472,6 +475,15 @@ export class SesionesService {
           opcionesSeleccionadas: respuesta
             ? respuesta.opcionesSeleccionadas.map((os) => os.opcion.texto)
             : [],
+          estadoRevisionIa: respuesta ? respuesta.estadoRevisionIa : 'PENDIENTE',
+          puntajeSugeridoIa: respuesta && respuesta.puntajeSugeridoIa !== null ? Number(respuesta.puntajeSugeridoIa) : null,
+          comentarioIa: respuesta ? respuesta.comentarioIa : null,
+          confianzaIa: respuesta && respuesta.confianzaIa !== null ? Number(respuesta.confianzaIa) : null,
+          justificacionIa: respuesta ? respuesta.justificacionIa : null,
+          fortalezasIa: respuesta && respuesta.fortalezasIa ? JSON.parse(respuesta.fortalezasIa) : [],
+          faltantesIa: respuesta && respuesta.faltantesIa ? JSON.parse(respuesta.faltantesIa) : [],
+          modeloIa: respuesta ? respuesta.modeloIa : null,
+          fechaAnalisisIa: respuesta ? respuesta.fechaAnalisisIa : null,
         };
       });
 
@@ -994,6 +1006,191 @@ export class SesionesService {
     });
 
     return actualizada;
+  }
+
+  // --- Asistencia de IA y Decisiones del Docente ---
+  async analizarRespuestaAbiertaConIa(idUsuarioDocente: number, idRespuesta: number) {
+    const respuesta = await this.prisma.respuesta.findUnique({
+      where: { idRespuesta },
+      include: { pregunta: { include: { evaluacion: true } } },
+    });
+
+    if (!respuesta) throw new NotFoundException('Respuesta no encontrada.');
+    if (respuesta.pregunta.evaluacion.idUsuario !== idUsuarioDocente) {
+      throw new ForbiddenException('No tienes permisos sobre esta evaluación.');
+    }
+
+    return this.aiService.analizarRespuestaAbierta(idRespuesta, idUsuarioDocente);
+  }
+
+  async aceptarSugerenciaIa(idUsuarioDocente: number, idRespuesta: number) {
+    const respuesta = await this.prisma.respuesta.findUnique({
+      where: { idRespuesta },
+      include: {
+        pregunta: { include: { evaluacion: true } },
+        participante: { include: { sesion: { include: { evaluacion: { include: { preguntas: true } } } } } },
+      },
+    });
+
+    if (!respuesta) throw new NotFoundException('Respuesta no encontrada.');
+    if (respuesta.pregunta.evaluacion.idUsuario !== idUsuarioDocente) {
+      throw new ForbiddenException('No tienes permisos sobre esta evaluación.');
+    }
+
+    if (respuesta.puntajeSugeridoIa === null) {
+      throw new BadRequestException('La respuesta no tiene una sugerencia de IA generada.');
+    }
+
+    const puntajeSugerido = Number(respuesta.puntajeSugeridoIa);
+    const comentarioSugerido = respuesta.comentarioIa || null;
+
+    return this.prisma.$transaction(async (tx) => {
+      const respActualizada = await tx.respuesta.update({
+        where: { idRespuesta },
+        data: {
+          puntaje: puntajeSugerido,
+          comentarioIa: comentarioSugerido,
+          estadoRevisionIa: EstadoRevisionIa.ACEPTADA,
+          corregidoDocente: true,
+          idUsuarioCorrector: idUsuarioDocente,
+          fechaCorreccion: new Date(),
+          esCorrecta: puntajeSugerido > 0,
+        },
+      });
+
+      await tx.auditoriaCalificacion.create({
+        data: {
+          idRespuesta,
+          idUsuario: idUsuarioDocente,
+          puntajeAnterior: respuesta.puntaje,
+          puntajeNuevo: puntajeSugerido,
+          comentarioAnterior: respuesta.comentarioIa,
+          comentarioNuevo: comentarioSugerido,
+          estadoRevisionAnterior: respuesta.estadoRevisionIa,
+          estadoRevisionNuevo: EstadoRevisionIa.ACEPTADA,
+          origen: 'IA_ACEPTADA',
+        },
+      });
+
+      await this.recalcularPuntajeParticipanteTx(tx, respuesta.idParticipante, respuesta.participante.sesion.evaluacion.preguntas);
+
+      return respActualizada;
+    });
+  }
+
+  async modificarSugerenciaIa(
+    idUsuarioDocente: number,
+    idRespuesta: number,
+    body: { puntaje: number; comentario?: string },
+  ) {
+    const respuesta = await this.prisma.respuesta.findUnique({
+      where: { idRespuesta },
+      include: {
+        pregunta: { include: { evaluacion: true } },
+        participante: { include: { sesion: { include: { evaluacion: { include: { preguntas: true } } } } } },
+      },
+    });
+
+    if (!respuesta) throw new NotFoundException('Respuesta no encontrada.');
+    if (respuesta.pregunta.evaluacion.idUsuario !== idUsuarioDocente) {
+      throw new ForbiddenException('No tienes permisos sobre esta evaluación.');
+    }
+
+    const puntajeMax = Number(respuesta.pregunta.puntaje);
+    const puntajeAsignado = Math.max(0, Math.min(puntajeMax, Number(body.puntaje)));
+    const comentarioDocente = body.comentario?.trim() || null;
+
+    return this.prisma.$transaction(async (tx) => {
+      const respActualizada = await tx.respuesta.update({
+        where: { idRespuesta },
+        data: {
+          puntaje: puntajeAsignado,
+          comentarioIa: comentarioDocente,
+          estadoRevisionIa: EstadoRevisionIa.MODIFICADA,
+          corregidoDocente: true,
+          idUsuarioCorrector: idUsuarioDocente,
+          fechaCorreccion: new Date(),
+          esCorrecta: puntajeAsignado > 0,
+        },
+      });
+
+      await tx.auditoriaCalificacion.create({
+        data: {
+          idRespuesta,
+          idUsuario: idUsuarioDocente,
+          puntajeAnterior: respuesta.puntaje,
+          puntajeNuevo: puntajeAsignado,
+          comentarioAnterior: respuesta.comentarioIa,
+          comentarioNuevo: comentarioDocente,
+          estadoRevisionAnterior: respuesta.estadoRevisionIa,
+          estadoRevisionNuevo: EstadoRevisionIa.MODIFICADA,
+          origen: 'IA_MODIFICADA',
+        },
+      });
+
+      await this.recalcularPuntajeParticipanteTx(tx, respuesta.idParticipante, respuesta.participante.sesion.evaluacion.preguntas);
+
+      return respActualizada;
+    });
+  }
+
+  async rechazarSugerenciaIa(idUsuarioDocente: number, idRespuesta: number) {
+    const respuesta = await this.prisma.respuesta.findUnique({
+      where: { idRespuesta },
+      include: { pregunta: { include: { evaluacion: true } } },
+    });
+
+    if (!respuesta) throw new NotFoundException('Respuesta no encontrada.');
+    if (respuesta.pregunta.evaluacion.idUsuario !== idUsuarioDocente) {
+      throw new ForbiddenException('No tienes permisos sobre esta evaluación.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const respActualizada = await tx.respuesta.update({
+        where: { idRespuesta },
+        data: {
+          estadoRevisionIa: EstadoRevisionIa.RECHAZADA,
+        },
+      });
+
+      await tx.auditoriaCalificacion.create({
+        data: {
+          idRespuesta,
+          idUsuario: idUsuarioDocente,
+          puntajeAnterior: respuesta.puntaje,
+          puntajeNuevo: respuesta.puntaje || 0,
+          comentarioAnterior: respuesta.comentarioIa,
+          comentarioNuevo: respuesta.comentarioIa,
+          estadoRevisionAnterior: respuesta.estadoRevisionIa,
+          estadoRevisionNuevo: EstadoRevisionIa.RECHAZADA,
+          origen: 'IA_RECHAZADA',
+        },
+      });
+
+      return respActualizada;
+    });
+  }
+
+  private async recalcularPuntajeParticipanteTx(tx: any, idParticipante: number, preguntas: any[]) {
+    const todasLasRespuestas = await tx.respuesta.findMany({
+      where: { idParticipante },
+    });
+
+    const nuevoPuntajeTotal = todasLasRespuestas.reduce(
+      (sum, r) => sum + (r.puntaje ? Number(r.puntaje) : 0),
+      0,
+    );
+
+    const puntajeMaxTotal = preguntas.reduce((sum, p) => sum + Number(p.puntaje), 0);
+    const nuevoPorcentaje = puntajeMaxTotal === 0 ? 0 : (nuevoPuntajeTotal / puntajeMaxTotal) * 100;
+
+    await tx.participante.update({
+      where: { idParticipante },
+      data: {
+        puntajeTotal: nuevoPuntajeTotal,
+        porcentaje: nuevoPorcentaje,
+      },
+    });
   }
 
   // --- Helpers ---

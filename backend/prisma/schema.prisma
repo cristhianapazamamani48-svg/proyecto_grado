@@ -9,7 +9,15 @@ generator client {
 
 enum RolUsuario {
   SUPER_ADMIN
+  ADMIN_ORGANIZACION
   DOCENTE
+  ESTUDIANTE
+}
+
+enum TipoPlan {
+  GRATUITO
+  BASICO
+  INSTITUCIONAL
 }
 
 enum EstadoGeneral {
@@ -63,31 +71,119 @@ enum TipoEventoMonitoreo {
   PERDIDA_FOCO
 }
 
-model Usuario {
-  idUsuario     Int           @id @default(autoincrement()) @map("id_usuario")
-  nombre        String        @db.VarChar(100)
-  apellido      String        @db.VarChar(100)
-  correo        String        @unique @db.VarChar(150)
-  password      String        @db.VarChar(255)
-  rol           RolUsuario
-  estado        EstadoGeneral @default(ACTIVO)
-  fechaCreacion DateTime      @default(now()) @map("fecha_creacion")
+enum EstadoRevisionIa {
+  PENDIENTE
+  SUGERIDA
+  ACEPTADA
+  MODIFICADA
+  RECHAZADA
+}
 
-  evaluaciones         Evaluacion[]
-  correccionesDocente  Respuesta[]   @relation("CorreccionesDocente")
+enum EstadoInvitacion {
+  PENDIENTE
+  ACEPTADA
+  EXPIRADA
+  REVOCADA
+}
+
+enum EstadoMembresia {
+  ACTIVO
+  PENDIENTE_APROBACION
+  INACTIVO
+}
+
+model Organizacion {
+  idOrganizacion          Int           @id @default(autoincrement()) @map("id_organizacion")
+  nombre                  String        @db.VarChar(150)
+  slug                    String        @unique @db.VarChar(100)
+  plan                    TipoPlan      @default(GRATUITO)
+  estado                  EstadoGeneral @default(ACTIVO)
+  limiteDocentes          Int           @default(5) @map("limite_docentes")
+  limiteEstudiantes       Int           @default(100) @map("limite_estudiantes")
+  limiteEvaluaciones      Int           @default(20) @map("limite_evaluaciones")
+  limiteCorreccionesIaMes Int           @default(50) @map("limite_correcciones_ia_mes")
+  iaHabilitada            Boolean       @default(true) @map("ia_habilitada")
+  codigoAcceso            String?       @unique @db.VarChar(20) @map("codigo_acceso")
+  codigoAccesoActivo      Boolean       @default(false) @map("codigo_acceso_activo")
+  rolPredeterminadoCodigo RolUsuario    @default(DOCENTE) @map("rol_predeterminado_codigo")
+  aprobacionRequerida     Boolean       @default(true) @map("aprobacion_requerida")
+  fechaCreacion           DateTime      @default(now()) @map("fecha_creacion")
+
+  membresias   Membresia[]
+  evaluaciones Evaluacion[]
+  estudiantes  Estudiante[]
+  usosIa       UsoIaLog[]
+  invitaciones InvitacionOrganizacion[]
+
+  @@map("organizacion")
+}
+
+model InvitacionOrganizacion {
+  idInvitacion   Int              @id @default(autoincrement()) @map("id_invitacion")
+  idOrganizacion Int              @map("id_organizacion")
+  idInvitador    Int              @map("id_invitador")
+  correoInvitado String           @db.VarChar(150) @map("correo_invitado")
+  rolAsignado    RolUsuario       @default(DOCENTE) @map("rol_asignado")
+  token          String           @unique @db.VarChar(128)
+  estado         EstadoInvitacion @default(PENDIENTE)
+  fechaCreacion  DateTime         @default(now()) @map("fecha_creacion")
+  fechaExpiracion DateTime        @map("fecha_expiracion")
+  fechaUso       DateTime?        @map("fecha_uso")
+
+  organizacion Organizacion @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: Cascade, onUpdate: Cascade)
+  invitador    Usuario      @relation("InvitacionesEnviadas", fields: [idInvitador], references: [idUsuario], onDelete: Restrict, onUpdate: Cascade)
+
+  @@map("invitacion_organizacion")
+}
+
+model Membresia {
+  idMembresia      Int             @id @default(autoincrement()) @map("id_membresia")
+  idUsuario        Int             @map("id_usuario")
+  idOrganizacion   Int             @map("id_organizacion")
+  rol              RolUsuario
+  estado           EstadoMembresia @default(ACTIVO) @map("estado")
+  metodoIngreso    String          @default("REGISTRO") @db.VarChar(30) @map("metodo_ingreso")
+  fechaCreacion    DateTime        @default(now()) @map("fecha_creacion")
+
+  usuario      Usuario      @relation(fields: [idUsuario], references: [idUsuario], onDelete: Cascade, onUpdate: Cascade)
+  organizacion Organizacion @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([idUsuario, idOrganizacion], map: "uq_usuario_organizacion")
+  @@map("membresia")
+}
+
+model Usuario {
+  idUsuario            Int           @id @default(autoincrement()) @map("id_usuario")
+  idOrganizacionActual Int?          @map("id_organizacion_actual")
+  nombre               String        @db.VarChar(100)
+  apellido             String        @db.VarChar(100)
+  correo               String        @unique @db.VarChar(150)
+  password             String        @db.VarChar(255)
+  rol                  RolUsuario    @default(DOCENTE)
+  estado               EstadoGeneral @default(ACTIVO)
+  fechaCreacion        DateTime      @default(now()) @map("fecha_creacion")
+
+  membresias            Membresia[]
+  evaluaciones          Evaluacion[]
+  correccionesDocente   Respuesta[]             @relation("CorreccionesDocente")
+  auditoriasAuditor     AuditoriaCalificacion[]
+  usosIa                UsoIaLog[]
+  invitacionesEnviadas  InvitacionOrganizacion[] @relation("InvitacionesEnviadas")
 
   @@map("usuario")
 }
 
 model Estudiante {
-  idEstudiante  Int           @id @default(autoincrement()) @map("id_estudiante")
-  nombre        String        @db.VarChar(100)
-  apellido      String        @db.VarChar(100)
-  correo        String        @unique @db.VarChar(150)
-  password      String        @db.VarChar(255)
-  estado        EstadoGeneral @default(ACTIVO)
-  fechaCreacion DateTime      @default(now()) @map("fecha_creacion")
+  idEstudiante   Int           @id @default(autoincrement()) @map("id_estudiante")
+  idOrganizacion Int?          @map("id_organizacion")
+  nombre         String        @db.VarChar(100)
+  apellido       String        @db.VarChar(100)
+  correo         String        @unique @db.VarChar(150)
+  password       String        @db.VarChar(255)
+  estado         EstadoGeneral @default(ACTIVO)
+  fechaCreacion  DateTime      @default(now()) @map("fecha_creacion")
 
+  organizacion    Organizacion?  @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: SetNull, onUpdate: Cascade)
   participaciones Participante[]
 
   @@map("estudiante")
@@ -96,6 +192,7 @@ model Estudiante {
 model Evaluacion {
   idEvaluacion          Int              @id @default(autoincrement()) @map("id_evaluacion")
   idUsuario             Int              @map("id_usuario")
+  idOrganizacion        Int?             @map("id_organizacion")
   nombre                String           @db.VarChar(200)
   descripcion           String?          @db.Text
   estado                EstadoEvaluacion @default(BORRADOR)
@@ -120,9 +217,10 @@ model Evaluacion {
   fechaCreacion         DateTime         @default(now()) @map("fecha_creacion")
   fechaActualizacion    DateTime         @updatedAt @map("fecha_actualizacion")
 
-  usuario    Usuario    @relation(fields: [idUsuario], references: [idUsuario], onDelete: Restrict, onUpdate: Cascade)
-  preguntas  Pregunta[]
-  sesiones   Sesion[]
+  usuario      Usuario       @relation(fields: [idUsuario], references: [idUsuario], onDelete: Restrict, onUpdate: Cascade)
+  organizacion Organizacion? @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: SetNull, onUpdate: Cascade)
+  preguntas    Pregunta[]
+  sesiones     Sesion[]
 
   @@map("evaluacion")
 }
@@ -158,14 +256,14 @@ model OpcionRespuesta {
 }
 
 model EspacioCompletar {
-  idEspacio          Int                     @id @default(autoincrement()) @map("id_espacio")
-  idPregunta         Int                     @map("id_pregunta")
-  numeroEspacio      Int                     @map("numero_espacio")
-  ignorarMayusculas  Boolean                 @default(true) @map("ignorar_mayusculas")
-  modoCalificacion   ModoCalificacionEspacio @default(EXACTA) @map("modo_calificacion")
-  calificacionParcial Boolean                @default(false) @map("calificacion_parcial")
+  idEspacio           Int                     @id @default(autoincrement()) @map("id_espacio")
+  idPregunta          Int                     @map("id_pregunta")
+  numeroEspacio       Int                     @map("numero_espacio")
+  ignorarMayusculas   Boolean                 @default(true) @map("ignorar_mayusculas")
+  modoCalificacion    ModoCalificacionEspacio @default(EXACTA) @map("modo_calificacion")
+  calificacionParcial Boolean                 @default(false) @map("calificacion_parcial")
 
-  pregunta         Pregunta          @relation(fields: [idPregunta], references: [idPregunta], onDelete: Cascade, onUpdate: Cascade)
+  pregunta        Pregunta          @relation(fields: [idPregunta], references: [idPregunta], onDelete: Cascade, onUpdate: Cascade)
   respuestasValidas RespuestaValida[]
 
   @@unique([idPregunta, numeroEspacio], map: "uq_espacio_numero")
@@ -218,22 +316,31 @@ model Participante {
 }
 
 model Respuesta {
-  idRespuesta        Int       @id @default(autoincrement()) @map("id_respuesta")
-  idParticipante     Int       @map("id_participante")
-  idPregunta         Int       @map("id_pregunta")
-  respuestaTexto     String?   @map("respuesta_texto") @db.Text
-  puntaje            Decimal?  @db.Decimal(6, 2)
-  esCorrecta         Boolean?  @map("es_correcta")
-  comentarioIa       String?   @map("comentario_ia") @db.Text
-  puntajeSugeridoIa  Decimal?  @map("puntaje_sugerido_ia") @db.Decimal(6, 2)
-  corregidoDocente   Boolean   @default(false) @map("corregido_docente")
-  idUsuarioCorrector Int?      @map("id_usuario_corrector")
-  fechaCorreccion    DateTime? @map("fecha_correccion")
+  idRespuesta        Int               @id @default(autoincrement()) @map("id_respuesta")
+  idParticipante     Int               @map("id_participante")
+  idPregunta         Int               @map("id_pregunta")
+  respuestaTexto     String?           @map("respuesta_texto") @db.Text
+  puntaje            Decimal?          @db.Decimal(6, 2)
+  esCorrecta         Boolean?          @map("es_correcta")
+  comentarioIa       String?           @map("comentario_ia") @db.Text
+  puntajeSugeridoIa  Decimal?          @map("puntaje_sugerido_ia") @db.Decimal(6, 2)
+  confianzaIa        Decimal?          @map("confianza_ia") @db.Decimal(4, 3)
+  justificacionIa    String?           @map("justificacion_ia") @db.Text
+  fortalezasIa       String?           @map("fortalezas_ia") @db.Text
+  faltantesIa        String?           @map("faltantes_ia") @db.Text
+  modeloIa           String?           @map("modelo_ia") @db.VarChar(50)
+  fechaAnalisisIa    DateTime?         @map("fecha_analisis_ia")
+  estadoRevisionIa   EstadoRevisionIa  @default(PENDIENTE) @map("estado_revision_ia")
+  versionPrompt      String?           @map("version_prompt") @db.VarChar(20)
+  corregidoDocente   Boolean           @default(false) @map("corregido_docente")
+  idUsuarioCorrector Int?              @map("id_usuario_corrector")
+  fechaCorreccion    DateTime?         @map("fecha_correccion")
 
-  participante           Participante            @relation(fields: [idParticipante], references: [idParticipante], onDelete: Cascade, onUpdate: Cascade)
-  pregunta               Pregunta                @relation(fields: [idPregunta], references: [idPregunta], onDelete: Restrict, onUpdate: Cascade)
-  usuarioCorrector       Usuario?                @relation("CorreccionesDocente", fields: [idUsuarioCorrector], references: [idUsuario], onDelete: SetNull, onUpdate: Cascade)
+  participante          Participante            @relation(fields: [idParticipante], references: [idParticipante], onDelete: Cascade, onUpdate: Cascade)
+  pregunta              Pregunta                @relation(fields: [idPregunta], references: [idPregunta], onDelete: Restrict, onUpdate: Cascade)
+  usuarioCorrector      Usuario?                @relation("CorreccionesDocente", fields: [idUsuarioCorrector], references: [idUsuario], onDelete: SetNull, onUpdate: Cascade)
   opcionesSeleccionadas RespuestaSeleccionada[]
+  auditorias            AuditoriaCalificacion[]
 
   @@unique([idParticipante, idPregunta], map: "uq_respuesta_participante_pregunta")
   @@map("respuesta")
@@ -261,4 +368,37 @@ model EventoMonitoreo {
   participante Participante @relation(fields: [idParticipante], references: [idParticipante], onDelete: Cascade, onUpdate: Cascade)
 
   @@map("evento_monitoreo")
+}
+
+model AuditoriaCalificacion {
+  idAuditoria            Int               @id @default(autoincrement()) @map("id_auditoria")
+  idRespuesta            Int               @map("id_respuesta")
+  idUsuario              Int               @map("id_usuario")
+  puntajeAnterior        Decimal?          @map("puntaje_anterior") @db.Decimal(6, 2)
+  puntajeNuevo           Decimal           @map("puntaje_nuevo") @db.Decimal(6, 2)
+  comentarioAnterior     String?           @map("comentario_anterior") @db.Text
+  comentarioNuevo        String?           @map("comentario_nuevo") @db.Text
+  estadoRevisionAnterior EstadoRevisionIa? @map("estado_revision_anterior")
+  estadoRevisionNuevo    EstadoRevisionIa  @map("estado_revision_nuevo")
+  origen                 String            @db.VarChar(50)
+  fechaAccion            DateTime          @default(now()) @map("fecha_accion")
+
+  respuesta Respuesta @relation(fields: [idRespuesta], references: [idRespuesta], onDelete: Cascade, onUpdate: Cascade)
+  usuario   Usuario   @relation(fields: [idUsuario], references: [idUsuario], onDelete: Restrict, onUpdate: Cascade)
+
+  @@map("auditoria_calificacion")
+}
+
+model UsoIaLog {
+  idLog            Int      @id @default(autoincrement()) @map("id_log")
+  idOrganizacion   Int      @map("id_organizacion")
+  idUsuario        Int      @map("id_usuario")
+  proveedor        String   @db.VarChar(50)
+  tokensUtilizados Int      @default(0) @map("tokens_utilizados")
+  fecha            DateTime @default(now())
+
+  organizacion Organizacion @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: Cascade, onUpdate: Cascade)
+  usuario      Usuario      @relation(fields: [idUsuario], references: [idUsuario], onDelete: Restrict, onUpdate: Cascade)
+
+  @@map("uso_ia_log")
 }

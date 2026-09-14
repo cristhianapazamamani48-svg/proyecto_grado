@@ -122,6 +122,60 @@ export class SesionesController {
     );
   }
 
+  @UseGuards(AuthGuard('jwt'))
+  @Post('respuestas/:idRespuesta/analizar-ia')
+  async analizarRespuestaConIa(
+    @Request() req: any,
+    @Param('idRespuesta') idRespuesta: string,
+  ) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.analizarRespuestaAbiertaConIa(
+      Number(req.user.sub),
+      Number(idRespuesta),
+    );
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Post('respuestas/:idRespuesta/aceptar-ia')
+  async aceptarSugerenciaIa(
+    @Request() req: any,
+    @Param('idRespuesta') idRespuesta: string,
+  ) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.aceptarSugerenciaIa(
+      Number(req.user.sub),
+      Number(idRespuesta),
+    );
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Post('respuestas/:idRespuesta/modificar-ia')
+  async modificarSugerenciaIa(
+    @Request() req: any,
+    @Param('idRespuesta') idRespuesta: string,
+    @Body() body: { puntaje: number; comentario?: string },
+  ) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.modificarSugerenciaIa(
+      Number(req.user.sub),
+      Number(idRespuesta),
+      body,
+    );
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Post('respuestas/:idRespuesta/rechazar-ia')
+  async rechazarSugerenciaIa(
+    @Request() req: any,
+    @Param('idRespuesta') idRespuesta: string,
+  ) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.rechazarSugerenciaIa(
+      Number(req.user.sub),
+      Number(idRespuesta),
+    );
+  }
+
   private requiereDocente(user: { tipo?: string }) {
     if (user.tipo !== 'USUARIO') throw new ForbiddenException('Esta acción requiere una cuenta docente.');
   }

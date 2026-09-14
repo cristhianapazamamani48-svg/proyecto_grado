@@ -1,104 +1,180 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
-export default function UnirsePage() {
-  const [codigo, setCodigo] = useState('');
-  const [nombreCompleto, setNombreCompleto] = useState('');
-  const [error, setError] = useState('');
-  const [cargando, setCargando] = useState(false);
+function UnirseContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const tokenInvitacion = searchParams.get('token');
 
-  const handleUnirse = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setCargando(true);
+  const [codigo, setCodigo] = useState('');
+  const [cargando, setCargando] = useState(false);
+  const [mensaje, setMensaje] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
 
-    try {
-      const res = await fetch(`${API}/sesiones/unirse`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codigo, nombreCompleto }),
+  const getToken = () => {
+    return typeof window !== 'undefined' ? localStorage.getItem('uub_docente_token') : null;
+  };
+
+  useEffect(() => {
+    // Si viene un token en la URL y el usuario ya está autenticado, intentar procesarlo
+    if (tokenInvitacion && getToken()) {
+      handleAceptarToken(tokenInvitacion);
+    }
+  }, [tokenInvitacion]);
+
+  const handleAceptarToken = async (tok: string) => {
+    const jwt = getToken();
+    if (!jwt) {
+      setMensaje({
+        tipo: 'error',
+        texto: 'Debes iniciar sesión con la cuenta de correo invitada para aceptar esta invitación.',
       });
+      return;
+    }
 
+    setCargando(true);
+    try {
+      const res = await fetch(`${API}/organizaciones/aceptar-invitacion/${tok}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Error al unirse a la sesión');
+      if (res.ok) {
+        setMensaje({ tipo: 'ok', texto: data.mensaje || '¡Invitación aceptada exitosamente!' });
+        setTimeout(() => router.push('/docente/dashboard'), 3000);
+      } else {
+        setMensaje({ tipo: 'error', texto: data.message || 'Error al procesar la invitación.' });
+      }
+    } catch (err) {
+      setMensaje({ tipo: 'error', texto: 'Error de conexión.' });
+    } finally {
+      setCargando(false);
+    }
+  };
 
-      localStorage.setItem('uub_guest_token', data.token);
-      localStorage.setItem('uub_token_reanudacion', data.tokenAcceso);
-      localStorage.setItem('uub_nombre_estudiante', nombreCompleto);
+  const handleUnirseConCodigo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!codigo.trim()) return;
 
-      router.push(`/examen/${data.sesion.codigo}`);
-    } catch (err: any) {
-      setError(err.message || 'Ocurrió un error inesperado');
+    const jwt = getToken();
+    if (!jwt) {
+      setMensaje({
+        tipo: 'error',
+        texto: 'Por favor inicia sesión o regístrate como docente antes de usar un código.',
+      });
+      return;
+    }
+
+    setCargando(true);
+    try {
+      const res = await fetch(`${API}/organizaciones/unirse-codigo`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jwt}`,
+        },
+        body: JSON.stringify({ codigo: codigo.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMensaje({ tipo: 'ok', texto: data.mensaje });
+        setTimeout(() => router.push('/docente/dashboard'), 3000);
+      } else {
+        setMensaje({ tipo: 'error', texto: data.message || 'Código inválido o inactivo.' });
+      }
+    } catch (err) {
+      setMensaje({ tipo: 'error', texto: 'Error de conexión.' });
     } finally {
       setCargando(false);
     }
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-8">
-        {/* Logo */}
-        <div className="text-center space-y-4">
-          <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-xl shadow-blue-500/25 mx-auto">U</div>
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Ingresar a Evaluación</h1>
-            <p className="text-slate-500 mt-2 text-sm">Introduce el código de sesión y tu nombre para comenzar.</p>
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 font-sans">
+      <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl space-y-6">
+        <div className="text-center space-y-2">
+          <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black text-2xl mx-auto shadow-lg shadow-indigo-500/30">
+            U
           </div>
+          <h1 className="text-2xl font-bold text-slate-900">Unirse a una Organización</h1>
+          <p className="text-xs text-slate-500">
+            Introduce el código de acceso proporcionado por tu institución o usa un enlace de invitación.
+          </p>
         </div>
 
-        {error && (
-          <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-2xl text-center">
-            {error}
+        {mensaje && (
+          <div
+            className={`p-4 rounded-xl text-sm font-semibold ${
+              mensaje.tipo === 'ok' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'
+            }`}
+          >
+            {mensaje.texto}
           </div>
         )}
 
-        <form onSubmit={handleUnirse} className="space-y-5 bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
-          <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Código de Sesión</label>
-            <input
-              type="text"
-              required
-              maxLength={20}
-              value={codigo}
-              onChange={(e) => setCodigo(e.target.value.toUpperCase())}
-              placeholder="Ej: ABC123"
-              className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-center text-3xl font-mono font-bold tracking-[0.3em] text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all uppercase placeholder:text-slate-300 placeholder:text-2xl placeholder:tracking-normal"
-            />
+        {tokenInvitacion ? (
+          <div className="space-y-4 text-center py-4">
+            <p className="text-sm text-slate-700 font-medium">
+              Procesando invitación por token...
+            </p>
+            {!getToken() && (
+              <div className="space-y-3 pt-2">
+                <p className="text-xs text-amber-700 bg-amber-50 p-3 rounded-lg border border-amber-200">
+                  Para aceptar la invitación debes haber iniciado sesión previamente.
+                </p>
+                <Link
+                  href="/docente/login"
+                  className="block w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl text-center transition"
+                >
+                  Iniciar Sesión
+                </Link>
+              </div>
+            )}
           </div>
+        ) : (
+          <form onSubmit={handleUnirseConCodigo} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
+                Código de Organización
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="Ej. ABC12345"
+                value={codigo}
+                onChange={(e) => setCodigo(e.target.value.toUpperCase())}
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl text-center font-mono font-bold text-lg tracking-widest uppercase focus:ring-2 focus:ring-indigo-600 outline-none"
+              />
+            </div>
 
-          <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Nombre Completo</label>
-            <input
-              type="text"
-              required
-              value={nombreCompleto}
-              onChange={(e) => setNombreCompleto(e.target.value)}
-              placeholder="Ej: Juan Pérez"
-              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-slate-800 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-            />
-          </div>
+            <button
+              type="submit"
+              disabled={cargando}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-sm rounded-xl transition shadow-lg shadow-indigo-600/20"
+            >
+              {cargando ? 'Procesando...' : 'Unirse con Código'}
+            </button>
+          </form>
+        )}
 
-          <button
-            type="submit"
-            disabled={cargando}
-            className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-base rounded-full shadow-lg shadow-blue-500/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {cargando ? 'Ingresando...' : 'Comenzar Evaluación'}
-          </button>
-        </form>
-
-        <div className="text-center">
-          <Link href="/" className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
-            ← Volver al inicio
+        <div className="pt-4 border-t border-slate-100 text-center">
+          <Link href="/docente/dashboard" className="text-xs font-semibold text-slate-500 hover:text-slate-800">
+            ← Volver al Dashboard
           </Link>
         </div>
       </div>
-    </main>
+    </div>
+  );
+}
+
+export default function UnirsePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">Cargando...</div>}>
+      <UnirseContent />
+    </Suspense>
   );
 }

@@ -24,6 +24,10 @@ services:
       DATABASE_URL: "postgresql://postgres:postgrespassword@postgres:5432/uub_evaluaciones?schema=public"
       JWT_SECRET: "super-secreto-uub-evaluaciones-jwt-key-2026"
       PORT: 3001
+      AI_PROVIDER: "mock"
+      AI_MODEL: "mock-v1"
+      AI_MAX_TOKENS: "500"
+      AI_TEMPERATURE: "0.3"
     depends_on:
       - postgres
 

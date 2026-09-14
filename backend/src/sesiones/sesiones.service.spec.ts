@@ -4,13 +4,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CalificacionService } from '../calificacion/calificacion.service';
 import { JwtService } from '@nestjs/jwt';
 import { EvaluacionGateway } from '../realtime/evaluacion.gateway';
+import { AiService } from '../ai/ai.service';
 import { BadRequestException } from '@nestjs/common';
-import { EstadoSesion, EstadoParticipante, TipoPregunta, TipoEventoMonitoreo } from '@prisma/client';
+import { EstadoSesion, EstadoParticipante, TipoEventoMonitoreo, EstadoRevisionIa } from '@prisma/client';
 
 describe('SesionesService', () => {
   let service: SesionesService;
   let prisma: any;
   let gateway: any;
+  let aiService: any;
 
   beforeEach(async () => {
     prisma = {
@@ -41,6 +43,9 @@ describe('SesionesService', () => {
         findFirst: jest.fn(),
         create: jest.fn(),
       },
+      auditoriaCalificacion: {
+        create: jest.fn(),
+      },
       $transaction: jest.fn((callback) => callback(prisma)),
     };
 
@@ -49,6 +54,20 @@ describe('SesionesService', () => {
       notificarSesionFinalizada: jest.fn(),
       notificarEventoMonitoreo: jest.fn(),
       notificarParticipanteActualizado: jest.fn(),
+    };
+
+    aiService = {
+      analizarRespuestaAbierta: jest.fn().mockResolvedValue({
+        puntajeSugerido: 8,
+        puntajeMaximo: 10,
+        nivelConfianza: 0.9,
+        esCorrecta: true,
+        justificacion: 'Buena respuesta',
+        fortalezas: ['Clara'],
+        faltantes: [],
+        retroalimentacion: 'Excelente trabajo',
+        requiereRevisionHumana: true,
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -69,6 +88,10 @@ describe('SesionesService', () => {
           provide: EvaluacionGateway,
           useValue: gateway,
         },
+        {
+          provide: AiService,
+          useValue: aiService,
+        },
       ],
     }).compile();
 
@@ -81,7 +104,6 @@ describe('SesionesService', () => {
 
   describe('Anti-Tampering y Validación de Tiempo', () => {
     it('rechaza guardar respuesta si tiempoTotal ha expirado', async () => {
-      // Participante ingresó hace 70 minutos en un examen de 60 minutos
       const fechaIngresoExpirada = new Date(Date.now() - 70 * 60 * 1000);
 
       prisma.participante.findUnique.mockResolvedValue({
@@ -94,7 +116,7 @@ describe('SesionesService', () => {
           estado: EstadoSesion.ACTIVA,
           evaluacion: {
             idEvaluacion: 5,
-            tiempoTotal: 60, // 60 minutos
+            tiempoTotal: 60,
             permitirModificar: true,
           },
         },
@@ -168,7 +190,7 @@ describe('SesionesService', () => {
     });
   });
 
-  describe('Corrección Manual de Respuestas Abiertas', () => {
+  describe('Corrección Manual de Respuestas Abiertas y Asistencia de IA', () => {
     it('asigna puntaje, marca como corregido y recalcula porcentaje', async () => {
       prisma.respuesta.findUnique.mockResolvedValue({
         idRespuesta: 88,
@@ -181,7 +203,7 @@ describe('SesionesService', () => {
           idParticipante: 1,
           sesion: {
             evaluacion: {
-              preguntas: [{ puntaje: 10 }, { puntaje: 10 }], // Max = 20 pts
+              preguntas: [{ puntaje: 10 }, { puntaje: 10 }],
             },
           },
         },
@@ -196,7 +218,7 @@ describe('SesionesService', () => {
       prisma.respuesta.findMany.mockResolvedValue([
         { idRespuesta: 88, puntaje: 8 },
         { idRespuesta: 89, puntaje: 10 },
-      ]); // Total = 18 / 20 = 90%
+      ]);
 
       prisma.participante.update.mockResolvedValue({
         idParticipante: 1,
@@ -212,6 +234,44 @@ describe('SesionesService', () => {
       expect(res.respuesta.puntaje).toBe(8);
       expect(res.participante.puntajeTotal).toBe(18);
       expect(res.participante.porcentaje).toBe(90);
+    });
+
+    it('acepta sugerencia de IA y registra auditoría', async () => {
+      prisma.respuesta.findUnique.mockResolvedValue({
+        idRespuesta: 10,
+        puntajeSugeridoIa: 9,
+        comentarioIa: 'Sugerencia buena',
+        puntaje: null,
+        estadoRevisionIa: EstadoRevisionIa.SUGERIDA,
+        idParticipante: 1,
+        pregunta: {
+          evaluacion: { idUsuario: 99 },
+        },
+        participante: {
+          idParticipante: 1,
+          sesion: {
+            evaluacion: {
+              preguntas: [{ puntaje: 10 }],
+            },
+          },
+        },
+      });
+
+      prisma.respuesta.update.mockResolvedValue({
+        idRespuesta: 10,
+        puntaje: 9,
+        estadoRevisionIa: EstadoRevisionIa.ACEPTADA,
+      });
+
+      prisma.respuesta.findMany.mockResolvedValue([{ idRespuesta: 10, puntaje: 9 }]);
+
+      const res = await service.aceptarSugerenciaIa(99, 10);
+      expect(res.estadoRevisionIa).toBe(EstadoRevisionIa.ACEPTADA);
+      expect(prisma.auditoriaCalificacion.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          origen: 'IA_ACEPTADA',
+        }),
+      });
     });
   });
 });

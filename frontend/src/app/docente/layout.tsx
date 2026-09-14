@@ -32,6 +32,7 @@ export default function DocenteLayout({ children }: { children: React.ReactNode 
     { label: 'Panel principal', href: '/docente/dashboard', icon: '📊' },
     { label: 'Mi biblioteca', href: '/docente/biblioteca', icon: '📚' },
     { label: 'Reportes e informes', href: '/docente/reportes', icon: '📈' },
+    { label: 'Mi organización', href: '/docente/organizacion', icon: '🏢' },
     { label: 'Nueva evaluación', href: '/docente/evaluacion/nueva', icon: '➕' },
   ];
 
