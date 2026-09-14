@@ -18,6 +18,8 @@ services:
       dockerfile: Dockerfile
     container_name: uub_backend
     restart: always
+    env_file:
+      - ./backend/.env
     ports:
       - "3001:3001"
     environment:
