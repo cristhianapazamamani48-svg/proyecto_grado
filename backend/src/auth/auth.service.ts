@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -47,9 +47,26 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
+    if (usuario.estado === 'INACTIVO') {
+      throw new UnauthorizedException('Tu cuenta de usuario ha sido desactivada por el administrador.');
+    }
+
     const valido = await bcrypt.compare(password, usuario.password);
     if (!valido) {
       throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    // Verificar si la institución está suspendida (excepto SUPER_ADMIN)
+    if (usuario.rol !== RolUsuario.SUPER_ADMIN && usuario.idOrganizacionActual) {
+      const org = await this.prisma.organizacion.findUnique({
+        where: { idOrganizacion: usuario.idOrganizacionActual },
+        select: { estado: true, nombre: true },
+      });
+      if (org && org.estado === 'INACTIVO') {
+        throw new ForbiddenException(
+          `La institución educativa "${org.nombre}" se encuentra suspendida temporalmente. Contacte al administrador.`,
+        );
+      }
     }
 
     const token = this.jwtService.sign({

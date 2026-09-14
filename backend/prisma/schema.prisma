@@ -169,6 +169,7 @@ model Usuario {
   auditoriasAuditor     AuditoriaCalificacion[]
   usosIa                UsoIaLog[]
   invitacionesEnviadas  InvitacionOrganizacion[] @relation("InvitacionesEnviadas")
+  auditoriasAdmin       AuditoriaAdministrativa[]
 
   @@map("usuario")
 }
@@ -401,4 +402,21 @@ model UsoIaLog {
   usuario      Usuario      @relation(fields: [idUsuario], references: [idUsuario], onDelete: Restrict, onUpdate: Cascade)
 
   @@map("uso_ia_log")
+}
+
+model AuditoriaAdministrativa {
+  idAuditoriaAdmin  Int      @id @default(autoincrement()) @map("id_auditoria_admin")
+  idUsuario         Int      @map("id_usuario")
+  accion            String   @db.VarChar(100)
+  recursoAfectado   String   @map("recurso_afectado") @db.VarChar(100)
+  idRecurso         String?  @map("id_recurso") @db.VarChar(50)
+  valoresAnteriores String?  @map("valores_anteriores") @db.Text
+  valoresNuevos     String?  @map("valores_nuevos") @db.Text
+  ipOrigen          String?  @map("ip_origen") @db.VarChar(45)
+  userAgent         String?  @map("user_agent") @db.Text
+  fecha             DateTime @default(now())
+
+  usuario Usuario @relation(fields: [idUsuario], references: [idUsuario], onDelete: Restrict, onUpdate: Cascade)
+
+  @@map("auditoria_administrativa")
 }

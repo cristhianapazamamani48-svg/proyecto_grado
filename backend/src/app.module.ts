@@ -7,6 +7,7 @@ import { SesionesModule } from './sesiones/sesiones.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { AiModule } from './ai/ai.module';
 import { OrganizacionModule } from './organizacion/organizacion.module';
+import { SuperadminModule } from './superadmin/superadmin.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { OrganizacionModule } from './organizacion/organizacion.module';
     RealtimeModule,
     AiModule,
     OrganizacionModule,
+    SuperadminModule,
   ],
 })
 export class AppModule {}

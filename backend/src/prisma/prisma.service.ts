@@ -1,5 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { PrismaClient, TipoPlan, RolUsuario } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -8,6 +9,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async onModuleInit() {
     await this.$connect();
     await this.asegurarOrganizacionPorDefecto();
+    await this.asegurarSuperAdmin();
   }
 
   async onModuleDestroy() {
@@ -76,6 +78,34 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       });
     } catch (err) {
       this.logger.error('Error al asegurar organización por defecto:', err);
+    }
+  }
+
+  async asegurarSuperAdmin() {
+    try {
+      const superadminExistente = await this.usuario.findFirst({
+        where: { rol: RolUsuario.SUPER_ADMIN },
+      });
+
+      if (!superadminExistente) {
+        const correo = process.env.SUPERADMIN_EMAIL || 'superadmin@uub.edu.pe';
+        const rawPassword = process.env.SUPERADMIN_PASSWORD || 'SuperAdminSecret2026!';
+        const passwordHash = await bcrypt.hash(rawPassword, 10);
+
+        const superAdmin = await this.usuario.create({
+          data: {
+            nombre: 'Super',
+            apellido: 'Administrador',
+            correo: correo.toLowerCase(),
+            password: passwordHash,
+            rol: RolUsuario.SUPER_ADMIN,
+          },
+        });
+
+        this.logger.log(`Superusuario inicial creado exitosamente (${superAdmin.correo}).`);
+      }
+    } catch (err) {
+      this.logger.error('Error al asegurar Superusuario inicial:', err);
     }
   }
 }
