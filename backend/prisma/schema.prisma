@@ -16,8 +16,30 @@ enum RolUsuario {
 
 enum TipoPlan {
   GRATUITO
+  MAESTRO_PRO
   BASICO
   INSTITUCIONAL
+}
+
+enum EstadoSuscripcion {
+  ACTIVA
+  EN_PERIODO_GRACIA
+  CANCELADA
+  SUSPENDIDA_POR_PAGO
+  INCOMPLETA
+}
+
+enum ProveedorPago {
+  MOCK_SANDBOX
+  MERCADOPAGO
+  PAYPAL
+}
+
+enum EstadoPagoTransaccion {
+  PENDIENTE
+  APROBADO
+  RECHAZADO
+  REEMBOLSADO
 }
 
 enum EstadoGeneral {
@@ -101,7 +123,9 @@ model Organizacion {
   limiteDocentes          Int           @default(5) @map("limite_docentes")
   limiteEstudiantes       Int           @default(100) @map("limite_estudiantes")
   limiteEvaluaciones      Int           @default(20) @map("limite_evaluaciones")
-  limiteCorreccionesIaMes Int           @default(50) @map("limite_correcciones_ia_mes")
+  limiteCorreccionesIaMes Int           @default(10) @map("limite_correcciones_ia_mes")
+  diasCaducidadEvaluacion Int           @default(20) @map("dias_caducidad_evaluacion")
+  esContenidoPrivado      Boolean       @default(false) @map("es_contenido_privado")
   iaHabilitada            Boolean       @default(true) @map("ia_habilitada")
   codigoAcceso            String?       @unique @db.VarChar(20) @map("codigo_acceso")
   codigoAccesoActivo      Boolean       @default(false) @map("codigo_acceso_activo")
@@ -114,6 +138,8 @@ model Organizacion {
   estudiantes  Estudiante[]
   usosIa       UsoIaLog[]
   invitaciones InvitacionOrganizacion[]
+  suscripcion  SuscripcionOrganizacion?
+  transacciones TransaccionPago[]
 
   @@map("organizacion")
 }
@@ -419,4 +445,52 @@ model AuditoriaAdministrativa {
   usuario Usuario @relation(fields: [idUsuario], references: [idUsuario], onDelete: Restrict, onUpdate: Cascade)
 
   @@map("auditoria_administrativa")
+}
+
+model SuscripcionOrganizacion {
+  idSuscripcion        Int               @id @default(autoincrement()) @map("id_suscripcion")
+  idOrganizacion       Int               @unique @map("id_organizacion")
+  plan                 TipoPlan          @default(GRATUITO)
+  estado               EstadoSuscripcion @default(ACTIVA)
+  proveedor            ProveedorPago     @default(MOCK_SANDBOX)
+  idSuscripcionExterna String?           @map("id_suscripcion_externa") @db.VarChar(100)
+  monto                Decimal           @default(0) @db.Decimal(10, 2)
+  moneda               String            @default("USD") @db.VarChar(10)
+  montoLocal           Decimal?          @map("monto_local") @db.Decimal(10, 2)
+  monedaLocal          String?           @default("BOB") @map("moneda_local") @db.VarChar(10)
+  fechaInicio          DateTime          @default(now()) @map("fecha_inicio")
+  fechaFinPeriodo      DateTime?         @map("fecha_fin_periodo")
+  fechaProximoCobro    DateTime?         @map("fecha_proximo_cobro")
+  fechaFinGracia       DateTime?         @map("fecha_fin_gracia")
+  autoRenovar          Boolean           @default(true) @map("auto_renovar")
+  fechaCreacion        DateTime          @default(now()) @map("fecha_creacion")
+  fechaActualizacion   DateTime          @updatedAt @map("fecha_actualizacion")
+
+  organizacion Organizacion     @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: Cascade, onUpdate: Cascade)
+  transacciones TransaccionPago[]
+
+  @@map("suscripcion_organizacion")
+}
+
+model TransaccionPago {
+  idTransaccion        Int                   @id @default(autoincrement()) @map("id_transaccion")
+  idSuscripcion        Int?                  @map("id_suscripcion")
+  idOrganizacion       Int                   @map("id_organizacion")
+  monto                Decimal               @db.Decimal(10, 2)
+  moneda               String                @default("USD") @db.VarChar(10)
+  montoLocal           Decimal?              @map("monto_local") @db.Decimal(10, 2)
+  monedaLocal          String?               @default("BOB") @map("moneda_local") @db.VarChar(10)
+  estado               EstadoPagoTransaccion @default(PENDIENTE)
+  proveedor            ProveedorPago         @default(MOCK_SANDBOX)
+  idTransaccionExterna String?               @unique @map("id_transaccion_externa") @db.VarChar(100)
+  metodoPago           String?               @map("metodo_pago") @db.VarChar(50)
+  urlCheckout          String?               @map("url_checkout") @db.Text
+  firmaWebhook         String?               @map("firma_webhook") @db.VarChar(255)
+  detalleError         String?               @map("detalle_error") @db.Text
+  fechaTransaccion     DateTime              @default(now()) @map("fecha_transaccion")
+
+  suscripcion  SuscripcionOrganizacion? @relation(fields: [idSuscripcion], references: [idSuscripcion], onDelete: SetNull, onUpdate: Cascade)
+  organizacion Organizacion            @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("transaccion_pago")
 }

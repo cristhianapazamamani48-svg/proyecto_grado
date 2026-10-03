@@ -16,8 +16,11 @@ export default function DocenteOrganizacionPage() {
   const [miembros, setMiembros] = useState<any[]>([]);
   const [invitaciones, setInvitaciones] = useState<any[]>([]);
   const [usoIa, setUsoIa] = useState<any>(null);
+  const [suscripcion, setSuscripcion] = useState<any>(null);
   const [cargando, setCargando] = useState(true);
-  const [tab, setTab] = useState<'resumen' | 'miembros' | 'invitaciones' | 'codigo' | 'ia'>('resumen');
+  const [cargandoCheckout, setCargandoCheckout] = useState(false);
+  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const [tab, setTab] = useState<'resumen' | 'miembros' | 'invitaciones' | 'codigo' | 'ia' | 'suscripcion'>('resumen');
 
   // Formularios
   const [correoInvitar, setCorreoInvitar] = useState('');
@@ -46,11 +49,12 @@ export default function DocenteOrganizacionPage() {
     try {
       const headers = { Authorization: `Bearer ${token}` };
 
-      const [resOrg, resMiembros, resInv, resIa] = await Promise.all([
+      const [resOrg, resMiembros, resInv, resIa, resSub] = await Promise.all([
         fetch(`${API}/organizaciones/mi-organizacion`, { headers }),
         fetch(`${API}/organizaciones/mi-organizacion/miembros`, { headers }),
         fetch(`${API}/organizaciones/mi-organizacion/invitaciones`, { headers }),
         fetch(`${API}/organizaciones/mi-organizacion/uso-ia`, { headers }),
+        fetch(`${API}/pagos/mi-suscripcion`, { headers }),
       ]);
 
       if (resOrg.ok) {
@@ -62,6 +66,7 @@ export default function DocenteOrganizacionPage() {
       if (resMiembros.ok) setMiembros(await resMiembros.json());
       if (resInv.ok) setInvitaciones(await resInv.json());
       if (resIa.ok) setUsoIa(await resIa.json());
+      if (resSub.ok) setSuscripcion(await resSub.json());
     } catch (err) {
       mostrarMensaje('error', 'Error al cargar información de la organización.');
     } finally {
@@ -198,6 +203,61 @@ export default function DocenteOrganizacionPage() {
     }
   };
 
+  const handleCrearCheckout = async (proveedor: 'MOCK_SANDBOX' | 'MERCADOPAGO' | 'PAYPAL') => {
+    const token = getToken();
+    setCargandoCheckout(true);
+    setCheckoutUrl(null);
+    try {
+      const res = await fetch(`${API}/pagos/checkout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ plan: 'MAESTRO_PRO', proveedor }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.redirectUrl) {
+          setCheckoutUrl(data.redirectUrl);
+          mostrarMensaje('ok', 'Sesión de pago creada. Redirige al proveedor de pago.');
+        } else if (data.estado === 'APROBADO') {
+          mostrarMensaje('ok', '¡Pago de prueba aprobado! Tu plan ha sido actualizado.');
+          cargarDatos();
+        } else {
+          mostrarMensaje('ok', `Sesión creada (${data.estado}). ID: ${data.idTransaccion || ''}`);
+          cargarDatos();
+        }
+      } else {
+        mostrarMensaje('error', data.message || 'Error al crear sesión de pago.');
+      }
+    } catch (err) {
+      mostrarMensaje('error', 'Error de conexión al iniciar pago.');
+    } finally {
+      setCargandoCheckout(false);
+    }
+  };
+
+  const handleCancelarSuscripcion = async () => {
+    if (!confirm('¿Estás seguro de que deseas cancelar la renovación automática? Mantendrás el acceso hasta el fin del período actual.')) return;
+    const token = getToken();
+    try {
+      const res = await fetch(`${API}/pagos/cancelar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        mostrarMensaje('ok', data.mensaje || 'Renovación automática cancelada.');
+        cargarDatos();
+      } else {
+        mostrarMensaje('error', data.message || 'Error al cancelar suscripción.');
+      }
+    } catch (err) {
+      mostrarMensaje('error', 'Error de conexión.');
+    }
+  };
+
   if (cargando) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -255,9 +315,10 @@ export default function DocenteOrganizacionPage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
         {/* Sub-Navegación por Tabs */}
-        <div className="flex space-x-2 border-b border-slate-200 pb-2">
+        <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
           {[
             { id: 'resumen', label: '📊 Resumen & Límites' },
+            { id: 'suscripcion', label: '💳 Suscripción y Pagos' },
             { id: 'miembros', label: `👥 Miembros (${miembros.length})` },
             { id: 'invitaciones', label: `✉️ Invitaciones (${invitaciones.filter(i => i.estado === 'PENDIENTE').length})` },
             { id: 'codigo', label: '🔑 Código de Organización' },
@@ -276,6 +337,250 @@ export default function DocenteOrganizacionPage() {
             </button>
           ))}
         </div>
+
+        {/* TAB: SUSCRIPCIÓN Y PAGOS */}
+        {tab === 'suscripcion' && (
+          <div className="space-y-6">
+            {/* Estado actual del plan */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-slate-400">Plan Actual</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <h2 className="text-2xl font-extrabold text-slate-800">
+                      {suscripcion?.plan === 'MAESTRO_PRO' ? 'Plan Maestro Pro' : 'Plan Gratuito'}
+                    </h2>
+                    <span className={`px-3 py-1 text-xs font-bold rounded-full uppercase ${
+                      suscripcion?.estadoSuscripcion === 'ACTIVA'
+                        ? 'bg-green-100 text-green-700'
+                        : suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA'
+                        ? 'bg-amber-100 text-amber-700 animate-pulse'
+                        : suscripcion?.estadoSuscripcion === 'CANCELADA'
+                        ? 'bg-red-100 text-red-600'
+                        : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {suscripcion?.estadoSuscripcion === 'ACTIVA' ? '✓ Activa'
+                        : suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA' ? '⚠ Período de Gracia'
+                        : suscripcion?.estadoSuscripcion === 'CANCELADA' ? 'Cancelada'
+                        : suscripcion?.estadoSuscripcion || 'Gratuito'}
+                    </span>
+                  </div>
+                  {suscripcion?.fechaFinPeriodo && (
+                    <p className="text-sm text-slate-500 mt-1">
+                      Acceso hasta: <strong>{new Date(suscripcion.fechaFinPeriodo).toLocaleDateString('es-BO', { day: '2-digit', month: 'long', year: 'numeric' })}</strong>
+                    </p>
+                  )}
+                  {suscripcion?.fechaProximoCobro && suscripcion?.autoRenovar && (
+                    <p className="text-sm text-slate-500">
+                      Próximo cobro: <strong>{new Date(suscripcion.fechaProximoCobro).toLocaleDateString('es-BO')}</strong>
+                    </p>
+                  )}
+                  {suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA' && suscripcion?.fechaFinGracia && (
+                    <p className="text-sm text-amber-600 font-semibold mt-1">
+                      ⚠ Período de gracia vence el {new Date(suscripcion.fechaFinGracia).toLocaleDateString('es-BO')}. Renueva para evitar suspensión.
+                    </p>
+                  )}
+                </div>
+                {suscripcion?.plan !== 'MAESTRO_PRO' || suscripcion?.estadoSuscripcion === 'CANCELADA' || suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA' ? (
+                  <div className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white p-5 rounded-2xl shadow-lg min-w-[220px] text-center">
+                    <p className="text-xs font-bold uppercase tracking-widest opacity-80">Plan Maestro Pro</p>
+                    <p className="text-3xl font-extrabold mt-1">Bs 50</p>
+                    <p className="text-xs opacity-75 mt-0.5">≈ $7.25 USD · Pago único</p>
+                    <p className="text-xs opacity-70 mt-1">Acceso ilimitado de por vida</p>
+                  </div>
+                ) : (
+                  <div className="bg-green-50 border border-green-200 p-5 rounded-2xl text-center min-w-[180px]">
+                    <p className="text-xs font-semibold text-green-600 uppercase">Estado</p>
+                    <p className="text-lg font-extrabold text-green-700 mt-1">✓ Activo</p>
+                    <p className="text-xs text-green-600 mt-1">Acceso completo</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Consumo actual */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                <p className="text-xs font-semibold uppercase text-slate-400">Evaluaciones</p>
+                <p className="text-2xl font-extrabold text-slate-800 mt-1">
+                  {suscripcion?.limites?.evaluacionesTotal ?? 0}
+                  <span className="text-base font-normal text-slate-400">
+                    {' '}/ {suscripcion?.limites?.evaluacionesLimite >= 99999 ? '∞' : suscripcion?.limites?.evaluacionesLimite ?? 20}
+                  </span>
+                </p>
+                <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
+                  <div
+                    className="bg-indigo-500 h-full rounded-full"
+                    style={{
+                      width: `${suscripcion?.limites?.evaluacionesLimite >= 99999
+                        ? 0
+                        : Math.min(100, ((suscripcion?.limites?.evaluacionesTotal ?? 0) / (suscripcion?.limites?.evaluacionesLimite ?? 20)) * 100)}%`
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                <p className="text-xs font-semibold uppercase text-slate-400">Créditos IA (mes)</p>
+                <p className="text-2xl font-extrabold text-indigo-700 mt-1">
+                  {suscripcion?.limites?.iaUsadasMes ?? 0}
+                  <span className="text-base font-normal text-slate-400">
+                    {' '}/ {suscripcion?.limites?.iaLimiteMes >= 99999 ? '∞' : suscripcion?.limites?.iaLimiteMes ?? 10}
+                  </span>
+                </p>
+                <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
+                  <div
+                    className="bg-indigo-500 h-full rounded-full"
+                    style={{
+                      width: `${suscripcion?.limites?.iaLimiteMes >= 99999
+                        ? 0
+                        : Math.min(100, ((suscripcion?.limites?.iaUsadasMes ?? 0) / (suscripcion?.limites?.iaLimiteMes ?? 10)) * 100)}%`
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                <p className="text-xs font-semibold uppercase text-slate-400">Contenido Privado</p>
+                <p className={`text-lg font-extrabold mt-2 ${suscripcion?.limites?.esContenidoPrivado ? 'text-green-600' : 'text-slate-400'}`}>
+                  {suscripcion?.limites?.esContenidoPrivado ? '✓ Habilitado' : '✗ No disponible'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {suscripcion?.limites?.esContenidoPrivado ? 'Plan Pro activo' : 'Requiere Plan Pro'}
+                </p>
+              </div>
+            </div>
+
+            {/* Panel de upgrade o gestión */}
+            {(suscripcion?.plan !== 'MAESTRO_PRO' || suscripcion?.estadoSuscripcion === 'CANCELADA' || suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA') && (
+              <div className="bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-200 p-6 rounded-2xl space-y-4">
+                <div>
+                  <h3 className="text-lg font-bold text-indigo-900">Actualizar al Plan Maestro Pro</h3>
+                  <p className="text-sm text-indigo-700 mt-1">
+                    Acceso ilimitado a evaluaciones, créditos de IA, contenido privado y más funciones avanzadas por un pago único de <strong>Bs 50</strong>.
+                  </p>
+                </div>
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-indigo-800">
+                  {[
+                    'Almacenamiento ilimitado de evaluaciones',
+                    'Créditos de IA ilimitados por mes',
+                    'Contenido privado para tu clase',
+                    'Reabrir tareas vencidas',
+                    'Pausar y reanudar actividades en vivo',
+                    'Calificación flexible de respuestas abiertas',
+                    'Más tipos de preguntas disponibles',
+                    'Soporte prioritario',
+                  ].map((f) => (
+                    <li key={f} className="flex items-center gap-2">
+                      <span className="text-indigo-500 font-bold">✓</span> {f}
+                    </li>
+                  ))}
+                </ul>
+
+                {checkoutUrl && (
+                  <div className="p-4 bg-white border border-indigo-300 rounded-xl">
+                    <p className="text-sm font-semibold text-indigo-800 mb-2">Enlace de pago generado:</p>
+                    <a href={checkoutUrl} target="_blank" rel="noopener noreferrer"
+                      className="block text-xs font-mono text-indigo-600 underline break-all">
+                      {checkoutUrl}
+                    </a>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-3 pt-2">
+                  <button
+                    onClick={() => handleCrearCheckout('MOCK_SANDBOX')}
+                    disabled={cargandoCheckout}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow transition"
+                  >
+                    {cargandoCheckout ? 'Procesando...' : '🧪 Pago de Prueba (Sandbox)'}
+                  </button>
+                  <button
+                    onClick={() => handleCrearCheckout('MERCADOPAGO')}
+                    disabled={cargandoCheckout}
+                    className="px-5 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow transition"
+                  >
+                    💳 Pagar con Mercado Pago
+                  </button>
+                  <button
+                    onClick={() => handleCrearCheckout('PAYPAL')}
+                    disabled={cargandoCheckout}
+                    className="px-5 py-2.5 bg-yellow-400 hover:bg-yellow-500 disabled:opacity-50 text-slate-900 font-semibold text-sm rounded-xl shadow transition"
+                  >
+                    🅿 Pagar con PayPal
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Gestión de suscripción activa */}
+            {suscripcion?.plan === 'MAESTRO_PRO' && suscripcion?.estadoSuscripcion === 'ACTIVA' && (
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <h3 className="text-base font-bold text-slate-800 mb-4">Gestión del Plan</h3>
+                <div className="flex flex-wrap gap-3">
+                  {suscripcion?.autoRenovar ? (
+                    <button
+                      onClick={handleCancelarSuscripcion}
+                      className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 font-semibold text-sm rounded-lg border border-red-200 transition"
+                    >
+                      Cancelar Renovación Automática
+                    </button>
+                  ) : (
+                    <p className="text-sm text-slate-500">La renovación automática está desactivada. Seguirás con acceso Pro hasta el fin del período.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Historial de transacciones */}
+            {suscripcion?.historialTransacciones?.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100">
+                  <h3 className="text-base font-bold text-slate-800">Historial de Pagos</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-4">Fecha</th>
+                        <th className="p-4">Plan</th>
+                        <th className="p-4">Monto</th>
+                        <th className="p-4">Proveedor</th>
+                        <th className="p-4">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {suscripcion.historialTransacciones.map((tx: any) => (
+                        <tr key={tx.idTransaccion} className="hover:bg-slate-50 transition">
+                          <td className="p-4 text-slate-600 text-xs">
+                            {new Date(tx.fechaTransaccion).toLocaleDateString('es-BO', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </td>
+                          <td className="p-4 font-semibold text-slate-800">{tx.planContratado}</td>
+                          <td className="p-4 text-slate-700">
+                            {tx.monedaLocal} {Number(tx.montoLocal || 0).toFixed(2)}
+                            <span className="text-xs text-slate-400 ml-1">(${Number(tx.montoUsd || 0).toFixed(2)} USD)</span>
+                          </td>
+                          <td className="p-4 text-xs text-slate-500 uppercase">{tx.proveedor?.replace('_', ' ')}</td>
+                          <td className="p-4">
+                            <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${
+                              tx.estado === 'APROBADO'
+                                ? 'bg-green-100 text-green-700'
+                                : tx.estado === 'PENDIENTE'
+                                ? 'bg-amber-100 text-amber-700'
+                                : tx.estado === 'RECHAZADO'
+                                ? 'bg-red-100 text-red-600'
+                                : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {tx.estado}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* TAB 1: RESUMEN Y LÍMITES */}
         {tab === 'resumen' && (

@@ -24,7 +24,13 @@ const LIMITES_PREDETERMINADOS: Record<TipoPlan, {
     limiteDocentes: 5,
     limiteEstudiantes: 100,
     limiteEvaluaciones: 20,
-    limiteCorreccionesIaMes: 50,
+    limiteCorreccionesIaMes: 10,
+  },
+  MAESTRO_PRO: {
+    limiteDocentes: 5,
+    limiteEstudiantes: 500,
+    limiteEvaluaciones: 99999,
+    limiteCorreccionesIaMes: 99999,
   },
   BASICO: {
     limiteDocentes: 25,

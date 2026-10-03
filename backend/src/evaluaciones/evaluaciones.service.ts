@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { PagosService } from '../pagos/pagos.service';
 import { EstadoEvaluacion, TipoPregunta, ModoCalificacionEspacio, ModoInicioSesion, EstadoParticipante } from '@prisma/client';
 
 export interface CrearPreguntaDto {
@@ -38,7 +39,10 @@ export interface CrearEvaluacionDto {
 
 @Injectable()
 export class EvaluacionesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pagosService: PagosService,
+  ) {}
 
   async listarPorDocente(idUsuario: number) {
     return this.prisma.evaluacion.findMany({
@@ -166,10 +170,20 @@ export class EvaluacionesService {
   }
 
   async crearEvaluacion(idUsuario: number, dto: CrearEvaluacionDto) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { idUsuario },
+      select: { idOrganizacionActual: true },
+    });
+
+    if (usuario?.idOrganizacionActual) {
+      await this.pagosService.verificarPermisosYCuotas(usuario.idOrganizacionActual, 'CREAR_EVALUACION');
+    }
+
     return this.prisma.$transaction(async (tx) => {
       const evaluacion = await tx.evaluacion.create({
         data: {
           idUsuario,
+          idOrganizacion: usuario?.idOrganizacionActual || null,
           nombre: dto.nombre,
           descripcion: dto.descripcion,
           estado: EstadoEvaluacion.BORRADOR,

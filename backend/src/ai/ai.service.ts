@@ -1,5 +1,6 @@
-import { Injectable, Logger, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { PagosService } from '../pagos/pagos.service';
 import { AiProvider, AiAnalysisResult } from './interfaces/ai-provider.interface';
 import { MockAIProvider } from './providers/mock-ai.provider';
 import { OpenAIProvider } from './providers/openai.provider';
@@ -14,6 +15,8 @@ export class AiService {
 
   constructor(
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => PagosService))
+    private readonly pagosService: PagosService,
     private readonly mockProvider: MockAIProvider,
     private readonly openAIProvider: OpenAIProvider,
     private readonly geminiProvider: GeminiProvider,
@@ -63,28 +66,13 @@ export class AiService {
       throw new NotFoundException(`La respuesta ${idRespuesta} no fue encontrada.`);
     }
 
-    const organizacion = respuesta.pregunta.evaluacion.organizacion;
-    if (organizacion && !organizacion.iaHabilitada) {
-      throw new ForbiddenException('La función de inteligencia artificial está desactivada para esta organización.');
+    const idOrganizacion = respuesta.pregunta.evaluacion.idOrganizacion;
+    if (idOrganizacion) {
+      await this.pagosService.verificarPermisosYCuotas(idOrganizacion, 'SOLICITAR_IA');
     }
 
-    // Verificar límites mensuales de correcciones IA
-    if (organizacion) {
-      const inicioMes = new Date();
-      inicioMes.setDate(1);
-      inicioMes.setHours(0, 0, 0, 0);
-
-      const usoMes = await this.prisma.usoIaLog.count({
-        where: {
-          idOrganizacion: organizacion.idOrganizacion,
-          fecha: { gte: inicioMes },
-        },
-      });
-
-      if (usoMes >= organizacion.limiteCorreccionesIaMes) {
-        throw new ForbiddenException(`Límite mensual de correcciones asistidas por IA alcanzado (${usoMes}/${organizacion.limiteCorreccionesIaMes}). Actualice su plan.`);
-      }
-    }
+    // La verificación de cuotas ya la realizó pagosService.verificarPermisosYCuotas arriba.
+    // Ejecutar análisis mediante el proveedor abstracto
 
     const maxScore = Number(respuesta.pregunta.puntaje) || 10;
     const enunciado = respuesta.pregunta.enunciado;
@@ -115,10 +103,10 @@ export class AiService {
     });
 
     // Registrar consumo en auditoría de uso de IA
-    if (organizacion) {
+    if (idOrganizacion) {
       await this.prisma.usoIaLog.create({
         data: {
-          idOrganizacion: organizacion.idOrganizacion,
+          idOrganizacion,
           idUsuario,
           proveedor: this.provider.nombreProveedor,
           tokensUtilizados: Math.ceil((enunciado.length + respEstudiante.length) / 4) + 150,

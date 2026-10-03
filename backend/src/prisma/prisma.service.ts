@@ -76,6 +76,29 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         where: { idOrganizacion: null },
         data: { idOrganizacion: defaultOrg.idOrganizacion },
       });
+
+      // Asegurar suscripción para todas las organizaciones existentes
+      const orgs = await this.organizacion.findMany({
+        include: { suscripcion: true },
+      });
+
+      for (const org of orgs) {
+        if (!org.suscripcion) {
+          await this.suscripcionOrganizacion.create({
+            data: {
+              idOrganizacion: org.idOrganizacion,
+              plan: org.plan || TipoPlan.GRATUITO,
+              monto: org.plan === TipoPlan.MAESTRO_PRO ? 7.25 : org.plan === TipoPlan.BASICO ? 29.00 : org.plan === TipoPlan.INSTITUCIONAL ? 99.00 : 0,
+              montoLocal: org.plan === TipoPlan.MAESTRO_PRO ? 50.00 : 0,
+              moneda: 'USD',
+              monedaLocal: 'BOB',
+              estado: 'ACTIVA',
+              autoRenovar: true,
+            },
+          });
+          this.logger.log(`Suscripción inicial creada para org '${org.nombre}' (ID: ${org.idOrganizacion}).`);
+        }
+      }
     } catch (err) {
       this.logger.error('Error al asegurar organización por defecto:', err);
     }
