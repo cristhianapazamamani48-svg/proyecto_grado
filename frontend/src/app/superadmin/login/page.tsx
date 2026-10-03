@@ -19,10 +19,10 @@ export default function SuperadminLoginPage() {
     setCargando(true);
 
     try {
-      const res = await fetch(`${API}/auth/login/docente`, {
+      const res = await fetch(`${API}/auth/docente/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ correo, password }),
+        body: JSON.stringify({ email: correo, password }),
       });
 
       const data = await res.json();
