@@ -50,6 +50,14 @@ export class PagosController {
     );
   }
 
+  @Post('sandbox/:idTransaccion/aprobar')
+  @UseGuards(AuthGuard('jwt'))
+  async aprobarPagoSandbox(@Request() req: any, @Param('idTransaccion') idTransaccion: string) {
+    const idUsuario = Number(req.user.sub);
+    const idOrganizacion = await this.obtenerIdOrganizacionUsuario(idUsuario);
+    return this.pagosService.aprobarPagoSandbox(idOrganizacion, Number(idTransaccion));
+  }
+
   @Post('webhook/:proveedor')
   async procesarWebhook(
     @Param('proveedor') proveedorStr: string,

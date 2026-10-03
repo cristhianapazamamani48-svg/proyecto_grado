@@ -19,6 +19,8 @@ export default function DocenteOrganizacionPage() {
   const [suscripcion, setSuscripcion] = useState<any>(null);
   const [cargando, setCargando] = useState(true);
   const [cargandoCheckout, setCargandoCheckout] = useState(false);
+  const [aprobandoPagoSandbox, setAprobandoPagoSandbox] = useState(false);
+  const [pagoSandboxPendiente, setPagoSandboxPendiente] = useState<{ idTransaccion: number; montoLocal: number; monedaLocal: string } | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<'resumen' | 'miembros' | 'invitaciones' | 'codigo' | 'ia' | 'suscripcion'>('resumen');
 
@@ -218,6 +220,16 @@ export default function DocenteOrganizacionPage() {
       });
       const data = await res.json();
       if (res.ok) {
+        if (proveedor === 'MOCK_SANDBOX' && data.idTransaccion) {
+          setPagoSandboxPendiente({
+            idTransaccion: data.idTransaccion,
+            montoLocal: data.montoLocal,
+            monedaLocal: data.monedaLocal,
+          });
+          mostrarMensaje('ok', 'Pago de prueba creado. Confirma la simulación para activar Maestro Pro.');
+          await cargarDatos();
+          return;
+        }
         if (data.redirectUrl) {
           setCheckoutUrl(data.redirectUrl);
           mostrarMensaje('ok', 'Sesión de pago creada. Redirige al proveedor de pago.');
@@ -235,6 +247,27 @@ export default function DocenteOrganizacionPage() {
       mostrarMensaje('error', 'Error de conexión al iniciar pago.');
     } finally {
       setCargandoCheckout(false);
+    }
+  };
+
+  const handleAprobarPagoSandbox = async () => {
+    if (!pagoSandboxPendiente) return;
+    const token = getToken();
+    setAprobandoPagoSandbox(true);
+    try {
+      const res = await fetch(`${API}/pagos/sandbox/${pagoSandboxPendiente.idTransaccion}/aprobar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'No se pudo aprobar el pago de prueba.');
+      setPagoSandboxPendiente(null);
+      mostrarMensaje('ok', 'Pago de prueba aprobado. Maestro Pro ya está activo.');
+      await cargarDatos();
+    } catch (err: any) {
+      mostrarMensaje('error', err.message || 'Error al aprobar el pago de prueba.');
+    } finally {
+      setAprobandoPagoSandbox(false);
     }
   };
 
@@ -508,6 +541,33 @@ export default function DocenteOrganizacionPage() {
                     🅿 Pagar con PayPal
                   </button>
                 </div>
+
+                {pagoSandboxPendiente && (
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50 p-5 space-y-3">
+                    <div>
+                      <h4 className="font-bold text-amber-950">Simulación de pago</h4>
+                      <p className="text-sm text-amber-900 mt-1">
+                        Se creó un pago de prueba por {pagoSandboxPendiente.monedaLocal} {pagoSandboxPendiente.montoLocal.toFixed(2)}. No se realizará ningún cobro real.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        onClick={handleAprobarPagoSandbox}
+                        disabled={aprobandoPagoSandbox}
+                        className="px-5 py-2.5 bg-green-700 hover:bg-green-800 disabled:opacity-50 text-white font-bold text-sm rounded-xl"
+                      >
+                        {aprobandoPagoSandbox ? 'Confirmando...' : 'Aprobar pago de prueba'}
+                      </button>
+                      <button
+                        onClick={() => setPagoSandboxPendiente(null)}
+                        disabled={aprobandoPagoSandbox}
+                        className="px-5 py-2.5 bg-white hover:bg-amber-100 border border-amber-300 text-amber-950 font-semibold text-sm rounded-xl"
+                      >
+                        Cancelar simulación
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -110,6 +110,35 @@ export class PagosService {
     };
   }
 
+  async aprobarPagoSandbox(idOrganizacion: number, idTransaccion: number) {
+    const transaccion = await this.prisma.transaccionPago.findFirst({
+      where: {
+        idTransaccion,
+        idOrganizacion,
+        proveedor: ProveedorPago.MOCK_SANDBOX,
+      },
+    });
+
+    if (!transaccion) {
+      throw new NotFoundException('No se encontró el pago de prueba para esta institución.');
+    }
+    if (transaccion.estado !== EstadoPagoTransaccion.PENDIENTE) {
+      throw new BadRequestException('Este pago de prueba ya fue procesado.');
+    }
+
+    return this.procesarWebhook(
+      ProveedorPago.MOCK_SANDBOX,
+      {
+        idTransaccionExterna: transaccion.idTransaccionExterna,
+        idSuscripcionExterna: `mock_sub_${transaccion.idTransaccion}`,
+        monto: Number(transaccion.montoLocal || transaccion.monto),
+        estadoPago: 'APROBADO',
+        evento: 'payment.approved',
+      },
+      { 'x-mock-signature': 'SANDBOX_USER_CONFIRMED' },
+    );
+  }
+
   // ─────────────────────────────────────────────────────────────────
   // PROCESAR WEBHOOK DE PASARELA (IDEMPOTENTE & VERIFICADO)
   // ─────────────────────────────────────────────────────────────────
