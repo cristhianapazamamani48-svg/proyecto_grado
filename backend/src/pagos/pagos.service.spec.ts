@@ -126,7 +126,13 @@ describe('PagosService — procesarWebhook', () => {
     // Nunca busca "la última pendiente" — solo un findFirst
     expect(prisma.transaccionPago.findFirst).toHaveBeenCalledTimes(1);
     expect(prisma.transaccionPago.findFirst).toHaveBeenCalledWith({
-      where: { proveedor: ProveedorPago.MOCK_SANDBOX, idTransaccionExterna: 'no_existe' },
+      where: {
+        proveedor: ProveedorPago.MOCK_SANDBOX,
+        OR: [
+          { idTransaccionExterna: 'no_existe' },
+          { firmaWebhook: 'MOCK_SANDBOX:no_existe' }
+        ]
+      },
     });
   });
 
@@ -382,7 +388,7 @@ describe('PagosService — Flujo integrado MP: checkout → preapproval → prim
     expect(MP_TX_LOCAL).toMatch(/^mp_tx_/);
   });
 
-  it('Paso 2 — subscription_preapproval authorized: NO activa el plan, SÍ rebindea la TX al preapproval ID', async () => {
+  it('Paso 2 — subscription_preapproval authorized: NO activa el plan', async () => {
     // El proveedor devuelve external_reference como idTransaccionExterna
     // y el preapproval_id como idSuscripcionExterna.
     (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce({
@@ -410,14 +416,6 @@ describe('PagosService — Flujo integrado MP: checkout → preapproval → prim
     // El plan NO se activa — PENDIENTE, no APROBADO
     expect(result.estado).toBe('PENDIENTE');
     expect(prisma.$transaction).not.toHaveBeenCalled(); // no se llamó aprobarTransaccionAtomica
-
-    // La TX fue revinculada al preapproval ID para que el primer cobro la encuentre
-    expect(prisma.transaccionPago.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { idTransaccion: 100 },
-        data: { idTransaccionExterna: MP_PREAPPROVAL },
-      }),
-    );
   });
 
   it('Paso 3 — primer cobro aprobado: activa el plan usando la TX revinculada', async () => {
@@ -580,6 +578,45 @@ describe('PagosService — Flujo integrado MP: checkout → preapproval → prim
 
     expect(result.estado).toBe('APROBADO');
     // No se realiza ninguna transacción de base de datos extra
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+  it('Caso 6 — Preapproval tardío: webhook de preapproval llega después de la activación', async () => {
+    (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce({
+      valido: true,
+      evento: 'subscription_preapproval',
+      estadoPago: 'PENDIENTE',
+      idTransaccionExterna: MP_TX_LOCAL, // El webhook preapproval trae el id del checkout (external_reference)
+      idSuscripcionExterna: MP_PREAPPROVAL,
+      monto: undefined, // Un preapproval NUNCA trae monto válido para renovación
+    });
+
+    const txYaAprobada = makeTx({
+      idTransaccion: 100,
+      idTransaccionExterna: MP_TX_LOCAL,
+      estado: EstadoPagoTransaccion.APROBADO, // Ya fue aprobada por el primer cobro
+      monto: 0,
+      montoLocal: 50,
+      firmaWebhook: `MOCK_SANDBOX:${MP_PRIMER_COBRO}`
+    });
+
+    const subActiva = {
+      idSuscripcion: 50,
+      idOrganizacion: 10,
+      estado: 'ACTIVA',
+      idSuscripcionExterna: MP_PREAPPROVAL,
+      monto: 50,
+    };
+
+    (prisma.transaccionPago.findFirst as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce(txYaAprobada); // 1er lookup -> encuentra la TX (por idTransaccionExterna)
+
+    const result = await service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {});
+
+    expect(result.estado).toBe('APROBADO'); // El estado guardado de la TX
+    
+    // NO debe haber creado ninguna transacción de renovación ni haber llamado a transacción atómica
+    expect(prisma.transaccionPago.create).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

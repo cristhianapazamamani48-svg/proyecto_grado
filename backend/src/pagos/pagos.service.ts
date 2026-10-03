@@ -202,11 +202,16 @@ export class PagosService {
       throw new BadRequestException('El webhook no proporcionó un ID de transacción externa válido.');
     }
 
-    // Buscar transacción existente exigiendo coincidencia exacta de proveedor e ID
+    // Buscar transacción existente exigiendo coincidencia exacta de proveedor e ID.
+    // También buscamos en firmaWebhook para identificar cobros recurrentes previamente aprobados 
+    // sin perder el ID de checkout original en idTransaccionExterna.
     let tx = await this.prisma.transaccionPago.findFirst({
       where: {
         proveedor: proveedorNombre,
-        idTransaccionExterna: verificacion.idTransaccionExterna,
+        OR: [
+          { idTransaccionExterna: verificacion.idTransaccionExterna },
+          { firmaWebhook: `${proveedorNombre}:${verificacion.idTransaccionExterna}`.slice(0, 250) }
+        ]
       },
     });
 
@@ -216,7 +221,7 @@ export class PagosService {
         where: { idSuscripcionExterna: verificacion.idSuscripcionExterna },
       });
 
-      if (sub && verificacion.monto !== undefined) {
+      if (sub && verificacion.monto !== undefined && verificacion.estadoPago !== 'PENDIENTE') {
          // Crear transacción de renovación
          this.logger.log(`[Renovación] Creando transacción para suscripción ${sub.idSuscripcionExterna}`);
          tx = await this.prisma.transaccionPago.create({
@@ -271,10 +276,6 @@ export class PagosService {
         this.logger.log(
           `[Desorden temporal MP] TX ${tx.idTransaccion} encontrada por referencia original (${verificacion.referenciaExternaOriginal}).`,
         );
-        // Actualizamos en memoria para que aprobarTransaccionAtomica (o rechazar) lo guarde en BD
-        if (verificacion.idTransaccionExterna) {
-          tx.idTransaccionExterna = verificacion.idTransaccionExterna;
-        }
       }
     }
 
@@ -303,6 +304,13 @@ export class PagosService {
     if (tx.estado === EstadoPagoTransaccion.APROBADO && verificacion.estadoPago === 'RECHAZADO') {
       this.logger.warn(
         `[Orden Temporal] TX ${tx.idTransaccionExterna} ya APROBADA recibió evento RECHAZADO tardío. Ignorado.`,
+      );
+      return { recibido: true, estado: 'APROBADO', idOrganizacion: tx.idOrganizacion };
+    }
+
+    if (tx.estado === EstadoPagoTransaccion.APROBADO && verificacion.estadoPago === 'PENDIENTE') {
+      this.logger.log(
+        `[Orden Temporal] TX ${tx.idTransaccionExterna} ya APROBADA recibió evento PENDIENTE tardío. Ignorado.`,
       );
       return { recibido: true, estado: 'APROBADO', idOrganizacion: tx.idOrganizacion };
     }
@@ -340,30 +348,18 @@ export class PagosService {
 
     // ── Activación atómica de suscripción ────────────────────────────
     if (verificacion.estadoPago === 'APROBADO') {
-      await this.aprobarTransaccionAtomica(tx, proveedorNombre, verificacion.idSuscripcionExterna);
+      await this.aprobarTransaccionAtomica(
+        tx,
+        proveedorNombre,
+        verificacion.idSuscripcionExterna,
+        verificacion.idTransaccionExterna
+      );
       return { recibido: true, estado: 'APROBADO', idOrganizacion: tx.idOrganizacion };
     }
 
     if (verificacion.estadoPago === 'RECHAZADO') {
-      await this.rechazarTransaccionAtomica(tx, verificacion.motivoFallo);
+      await this.rechazarTransaccionAtomica(tx, verificacion.motivoFallo, verificacion.idTransaccionExterna);
       return { recibido: true, estado: 'RECHAZADO', idOrganizacion: tx.idOrganizacion };
-    }
-
-    // ── Rebinding para subscription_preapproval authorized (Mercado Pago) ────
-    // Cuando el webhook authorized encuentra la TX por external_reference ('mp_tx_...'),
-    // actualizamos idTransaccionExterna al preapproval_id real de MP.
-    // Esto permite que el webhook del primer cobro (con un id de pago distinto)
-    // encuentre esta TX PENDIENTE en el 3er lookup.
-    if (verificacion.estadoPago === 'PENDIENTE'
-        && verificacion.idSuscripcionExterna
-        && tx.idTransaccionExterna !== verificacion.idSuscripcionExterna) {
-      await this.prisma.transaccionPago.update({
-        where: { idTransaccion: tx.idTransaccion },
-        data: { idTransaccionExterna: verificacion.idSuscripcionExterna },
-      });
-      this.logger.log(
-        `[Preapproval MP] TX ${tx.idTransaccion}: '${tx.idTransaccionExterna}' → '${verificacion.idSuscripcionExterna}'`,
-      );
     }
 
     return { recibido: true, estado: verificacion.estadoPago, idOrganizacion: tx.idOrganizacion };
@@ -441,7 +437,7 @@ export class PagosService {
   // ─────────────────────────────────────────────────────────────────
   // HELPERS ATÓMICOS
   // ─────────────────────────────────────────────────────────────────
-  private async aprobarTransaccionAtomica(tx: any, proveedorNombre: ProveedorPago, idSuscripcionExterna?: string) {
+  private async aprobarTransaccionAtomica(tx: any, proveedorNombre: ProveedorPago, idSuscripcionExterna?: string, idCobroRecibido?: string) {
     const subActual = await this.prisma.suscripcionOrganizacion.findUnique({
       where: { idOrganizacion: tx.idOrganizacion }
     });
@@ -458,13 +454,14 @@ export class PagosService {
       fechaFinPeriodo.setMonth(fechaFinPeriodo.getMonth() + 1);
     }
 
+    const cobroParaIdempotencia = idCobroRecibido || tx.idTransaccionExterna;
+
     await this.prisma.$transaction([
       this.prisma.transaccionPago.update({
         where: { idTransaccion: tx.idTransaccion },
         data: {
           estado: EstadoPagoTransaccion.APROBADO,
-          idTransaccionExterna: tx.idTransaccionExterna,
-          firmaWebhook: `${proveedorNombre}:${tx.idTransaccionExterna}`.slice(0, 250),
+          firmaWebhook: `${proveedorNombre}:${cobroParaIdempotencia}`.slice(0, 250),
         },
       }),
       this.prisma.suscripcionOrganizacion.upsert({
@@ -511,16 +508,18 @@ export class PagosService {
     this.logger.log(`[Suscripción Activada] Institución ${tx.idOrganizacion} actualizada a Plan MAESTRO_PRO.`);
   }
 
-  private async rechazarTransaccionAtomica(tx: any, motivoFallo?: string) {
+  private async rechazarTransaccionAtomica(tx: any, motivoFallo?: string, idCobroRecibido?: string) {
     const fechaFinGracia = new Date();
     fechaFinGracia.setDate(fechaFinGracia.getDate() + 7);
+
+    const cobroParaIdempotencia = idCobroRecibido || tx.idTransaccionExterna;
 
     await this.prisma.$transaction([
       this.prisma.transaccionPago.update({
         where: { idTransaccion: tx.idTransaccion },
         data: {
           estado: EstadoPagoTransaccion.RECHAZADO,
-          idTransaccionExterna: tx.idTransaccionExterna,
+          firmaWebhook: `${tx.proveedor}:${cobroParaIdempotencia}`.slice(0, 250),
           detalleError: motivoFallo || 'Pago rechazado por el procesador',
         },
       }),
