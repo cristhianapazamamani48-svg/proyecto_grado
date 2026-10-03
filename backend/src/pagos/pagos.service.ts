@@ -81,7 +81,13 @@ export class PagosService {
       urlRetornoCancel: `${frontendUrl}/docente/organizacion?tab=suscripcion&pago=cancelado`,
     };
 
-    const checkoutResult = await provider.crearSesionCheckout(params);
+    let checkoutResult;
+    try {
+      checkoutResult = await provider.crearSesionCheckout(params);
+    } catch (e: any) {
+      this.logger.error(`Error al iniciar checkout con ${provider.nombreProveedor}:`, e);
+      throw new BadRequestException(e.message || 'Error al iniciar la sesión de pago. Verifica que las credenciales estén configuradas.');
+    }
 
     // Registrar transacción pendiente
     const transaccion = await this.prisma.transaccionPago.create({
@@ -132,10 +138,11 @@ export class PagosService {
         idTransaccionExterna: transaccion.idTransaccionExterna,
         idSuscripcionExterna: `mock_sub_${transaccion.idTransaccion}`,
         monto: Number(transaccion.montoLocal || transaccion.monto),
+        moneda: transaccion.monedaLocal || 'BOB',
         estadoPago: 'APROBADO',
         evento: 'payment.approved',
       },
-      { 'x-mock-signature': 'SANDBOX_USER_CONFIRMED' },
+      { 'x-mock-signature': process.env.MOCK_WEBHOOK_SECRET || 'SANDBOX_USER_CONFIRMED' },
     );
   }
 
@@ -154,120 +161,249 @@ export class PagosService {
       `[Webhook ${proveedorNombre}] Evento: ${verificacion.evento}, TX: ${verificacion.idTransaccionExterna}`,
     );
 
-    // Buscar transacción existente
-    let tx = await this.prisma.transaccionPago.findFirst({
+    if (!verificacion.idTransaccionExterna) {
+      throw new BadRequestException('El webhook no proporcionó un ID de transacción externa válido.');
+    }
+
+    // Buscar transacción existente exigiendo coincidencia exacta de proveedor e ID
+    const tx = await this.prisma.transaccionPago.findFirst({
       where: {
-        OR: [
-          { idTransaccionExterna: verificacion.idTransaccionExterna },
-          ...(verificacion.idTransaccionExterna
-            ? [{ idTransaccionExterna: { contains: verificacion.idTransaccionExterna } }]
-            : []),
-        ],
+        proveedor: proveedorNombre,
+        idTransaccionExterna: verificacion.idTransaccionExterna,
       },
     });
 
     if (!tx) {
-      // Buscar la última transacción pendiente si no coincide por ID externo
-      tx = await this.prisma.transaccionPago.findFirst({
-        where: { estado: EstadoPagoTransaccion.PENDIENTE },
-        orderBy: { fechaTransaccion: 'desc' },
-      });
-    }
-
-    if (!tx) {
-      this.logger.warn('No se encontró transacción correspondiente al webhook.');
+      this.logger.warn(
+        `No se encontró transacción correspondiente al webhook. Proveedor: ${proveedorNombre}, ID Externa: ${verificacion.idTransaccionExterna}`,
+      );
+      // Los proveedores esperan HTTP 200/2xx aunque no encontremos el ID,
+      // para no reintentar indefinidamente con el mismo webhook desconocido.
       return { recibido: true, estado: 'DESCONOCIDO' };
     }
 
-    if (verificacion.estadoPago === 'APROBADO') {
-      // Actualizar transacción a APROBADO
-      await this.prisma.transaccionPago.update({
-        where: { idTransaccion: tx.idTransaccion },
-        data: {
-          estado: EstadoPagoTransaccion.APROBADO,
-          firmaWebhook: JSON.stringify(headers || {}).slice(0, 250),
-        },
-      });
+    // ── Idempotencia ─────────────────────────────────────────────────
+    if (tx.estado === EstadoPagoTransaccion.APROBADO && verificacion.estadoPago === 'APROBADO') {
+      this.logger.log(`TX ${tx.idTransaccionExterna} ya aprobada previamente. Ignorando evento.`);
+      return { recibido: true, estado: 'APROBADO', idOrganizacion: tx.idOrganizacion };
+    }
+    if (tx.estado === EstadoPagoTransaccion.RECHAZADO && verificacion.estadoPago === 'RECHAZADO') {
+      this.logger.log(`TX ${tx.idTransaccionExterna} ya rechazada previamente. Ignorando evento.`);
+      return { recibido: true, estado: 'RECHAZADO', idOrganizacion: tx.idOrganizacion };
+    }
 
-      // Actualizar la suscripción de la institución al Plan Maestro Pro (50 Bs) o al plan comprado
-      const fechaInicio = new Date();
-      const fechaFinPeriodo = new Date();
-      fechaFinPeriodo.setFullYear(fechaFinPeriodo.getFullYear() + 1); // 1 año de vigencia
-
-      await this.prisma.$transaction([
-        this.prisma.suscripcionOrganizacion.upsert({
-          where: { idOrganizacion: tx.idOrganizacion },
-          create: {
-            idOrganizacion: tx.idOrganizacion,
-            plan: TipoPlan.MAESTRO_PRO,
-            estado: EstadoSuscripcion.ACTIVA,
-            proveedor: proveedorNombre,
-            idSuscripcionExterna: verificacion.idSuscripcionExterna || tx.idTransaccionExterna,
-            monto: tx.monto,
-            moneda: tx.moneda,
-            montoLocal: tx.montoLocal,
-            monedaLocal: tx.monedaLocal,
-            fechaInicio,
-            fechaFinPeriodo,
-            fechaProximoCobro: fechaFinPeriodo,
-            autoRenovar: true,
-          },
-          update: {
-            plan: TipoPlan.MAESTRO_PRO,
-            estado: EstadoSuscripcion.ACTIVA,
-            proveedor: proveedorNombre,
-            idSuscripcionExterna: verificacion.idSuscripcionExterna || tx.idTransaccionExterna,
-            fechaFinPeriodo,
-            fechaProximoCobro: fechaFinPeriodo,
-            fechaFinGracia: null,
-          },
-        }),
-        this.prisma.organizacion.update({
-          where: { idOrganizacion: tx.idOrganizacion },
-          data: {
-            plan: TipoPlan.MAESTRO_PRO,
-            limiteEvaluaciones: 99999,
-            limiteCorreccionesIaMes: 99999,
-            diasCaducidadEvaluacion: 99999, // Sin caducidad
-            esContenidoPrivado: true,
-            iaHabilitada: true,
-          },
-        }),
-      ]);
-
-      this.logger.log(
-        `[Suscripción Activada] Institución ${tx.idOrganizacion} actualizada a Plan MAESTRO_PRO.`,
+    // ── Protección contra eventos tardíos/fuera de orden ────────────
+    // Un pago ya APROBADO nunca puede degradarse a RECHAZADO por un evento tardío.
+    if (tx.estado === EstadoPagoTransaccion.APROBADO && verificacion.estadoPago === 'RECHAZADO') {
+      this.logger.warn(
+        `[Orden Temporal] TX ${tx.idTransaccionExterna} ya APROBADA recibió evento RECHAZADO tardío. Ignorado.`,
       );
+      return { recibido: true, estado: 'APROBADO', idOrganizacion: tx.idOrganizacion };
+    }
 
+    // ── Validaciones de monto y moneda ───────────────────────────────
+    // Para una aprobación, monto Y moneda son OBLIGATORIOS — nunca se asumen.
+    if (verificacion.estadoPago === 'APROBADO') {
+      if (verificacion.monto === undefined || verificacion.monto === null || !verificacion.moneda) {
+        this.logger.error(
+          `[Webhook ${proveedorNombre}] Aprobación sin monto o moneda para TX ${tx.idTransaccionExterna}. Rechazando.`,
+        );
+        throw new BadRequestException(
+          'El proveedor aprobó el pago sin reportar monto o moneda. No se puede activar la suscripción.',
+        );
+      }
+    }
+
+    // Comparación de monto con conciencia de moneda
+    if (verificacion.monto !== undefined && verificacion.monto !== null && verificacion.moneda) {
+      const monedaWebhook = verificacion.moneda.toUpperCase();
+      // PayPal reporta USD; MercadoPago y Mock reportan moneda local (BOB).
+      const montoEsperado = monedaWebhook === 'USD'
+        ? Number(tx.monto) || 0
+        : Number(tx.montoLocal) || 0;
+      const montoRecibido = Number(verificacion.monto);
+
+      if (montoEsperado === 0 || Math.abs(montoRecibido - montoEsperado) > 0.1) {
+        this.logger.error(
+          `Discrepancia de monto para TX ${tx.idTransaccionExterna}. ` +
+          `Moneda: ${monedaWebhook}. Esperado: ${montoEsperado}, Recibido: ${montoRecibido}`,
+        );
+        throw new BadRequestException('Monto del webhook no coincide con el monto esperado.');
+      }
+    }
+
+    // ── Activación atómica de suscripción ────────────────────────────
+    if (verificacion.estadoPago === 'APROBADO') {
+      await this.aprobarTransaccionAtomica(tx, proveedorNombre, verificacion.idSuscripcionExterna);
       return { recibido: true, estado: 'APROBADO', idOrganizacion: tx.idOrganizacion };
     }
 
     if (verificacion.estadoPago === 'RECHAZADO') {
-      await this.prisma.transaccionPago.update({
-        where: { idTransaccion: tx.idTransaccion },
-        data: {
-          estado: EstadoPagoTransaccion.RECHAZADO,
-          detalleError: verificacion.motivoFallo || 'Pago rechazado por el procesador',
-        },
-      });
-
-      // Pasar a período de gracia por 7 días
-      const fechaFinGracia = new Date();
-      fechaFinGracia.setDate(fechaFinGracia.getDate() + 7);
-
-      await this.prisma.suscripcionOrganizacion.update({
-        where: { idOrganizacion: tx.idOrganizacion },
-        data: {
-          estado: EstadoSuscripcion.EN_PERIODO_GRACIA,
-          fechaFinGracia,
-        },
-      });
-
+      await this.rechazarTransaccionAtomica(tx, verificacion.motivoFallo);
       return { recibido: true, estado: 'RECHAZADO', idOrganizacion: tx.idOrganizacion };
     }
 
     return { recibido: true, estado: verificacion.estadoPago };
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // CAPTURAR ORDEN DE PAYPAL (Acción del usuario al regresar del checkout)
+  // ─────────────────────────────────────────────────────────────────
+  async capturarPagoPayPal(idOrganizacion: number, idTransaccionExterna: string) {
+    const tx = await this.prisma.transaccionPago.findFirst({
+      where: {
+        idTransaccionExterna,
+        idOrganizacion,
+        proveedor: ProveedorPago.PAYPAL,
+      },
+    });
+
+    if (!tx) {
+      throw new NotFoundException('Transacción de PayPal no encontrada o no pertenece a la institución.');
+    }
+
+    if (tx.estado === EstadoPagoTransaccion.APROBADO) {
+      return { mensaje: 'El pago ya fue procesado y la suscripción está activa.' };
+    }
+    if (tx.estado === EstadoPagoTransaccion.RECHAZADO) {
+      throw new BadRequestException('El pago ya fue rechazado anteriormente.');
+    }
+
+    let order;
+    try {
+      order = await this.paypalProvider.consultarOrden(idTransaccionExterna);
+    } catch (e: any) {
+      this.logger.error('Error al consultar estado de orden PayPal:', e);
+      throw new BadRequestException('No se pudo verificar el estado actual de la orden en PayPal.');
+    }
+
+    let captureDetails;
+
+    if (order.status === 'COMPLETED') {
+      // Ya había sido capturada (quizás un intento local falló a la mitad), recuperamos sus detalles
+      captureDetails = order.purchase_units?.[0]?.payments?.captures?.[0];
+      this.logger.log(`[PayPal] La orden ${idTransaccionExterna} ya estaba COMPLETED, reanudando activación local.`);
+    } else if (order.status === 'APPROVED') {
+      // El usuario aprobó el pago, lista para capturar remota y localmente
+      try {
+        const capture = await this.paypalProvider.capturarOrden(idTransaccionExterna);
+        if (capture.status !== 'COMPLETED') {
+          throw new BadRequestException(`El estado de la captura es ${capture.status}, se esperaba COMPLETED.`);
+        }
+        captureDetails = capture.purchase_units?.[0]?.payments?.captures?.[0];
+      } catch (e: any) {
+        this.logger.error('Error al capturar orden PayPal:', e);
+        throw new BadRequestException(e.message || 'No se pudo capturar la orden en PayPal.');
+      }
+    } else {
+      throw new BadRequestException(`La orden no está en estado APPROVED ni COMPLETED. Estado actual: ${order.status}`);
+    }
+
+    if (!captureDetails) {
+      throw new BadRequestException('PayPal no devolvió detalles de la captura.');
+    }
+
+    const monto = Number(captureDetails.amount?.value);
+    const moneda = captureDetails.amount?.currency_code?.toUpperCase();
+
+    if (!moneda || isNaN(monto)) {
+      throw new BadRequestException('PayPal no reportó monto o moneda válidos.');
+    }
+
+    const montoEsperado = Number(tx.monto) || 0; // En DB se guarda en USD
+    if (moneda !== 'USD' || Math.abs(monto - montoEsperado) > 0.1) {
+      throw new BadRequestException(
+        `Discrepancia de monto/moneda. Esperado: ${montoEsperado} USD. Recibido: ${monto} ${moneda}`,
+      );
+    }
+
+    await this.aprobarTransaccionAtomica(tx, ProveedorPago.PAYPAL, captureDetails.id);
+
+    return { mensaje: 'Pago capturado y suscripción activada con éxito.' };
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // HELPERS ATÓMICOS
+  // ─────────────────────────────────────────────────────────────────
+  private async aprobarTransaccionAtomica(tx: any, proveedorNombre: ProveedorPago, idSuscripcionExterna?: string) {
+    const fechaInicio = new Date();
+    const fechaFinPeriodo = new Date();
+    fechaFinPeriodo.setFullYear(fechaFinPeriodo.getFullYear() + 1);
+
+    await this.prisma.$transaction([
+      this.prisma.transaccionPago.update({
+        where: { idTransaccion: tx.idTransaccion },
+        data: {
+          estado: EstadoPagoTransaccion.APROBADO,
+          firmaWebhook: `${proveedorNombre}:${tx.idTransaccionExterna}`.slice(0, 250),
+        },
+      }),
+      this.prisma.suscripcionOrganizacion.upsert({
+        where: { idOrganizacion: tx.idOrganizacion },
+        create: {
+          idOrganizacion: tx.idOrganizacion,
+          plan: TipoPlan.MAESTRO_PRO,
+          estado: EstadoSuscripcion.ACTIVA,
+          proveedor: proveedorNombre,
+          idSuscripcionExterna: idSuscripcionExterna || tx.idTransaccionExterna,
+          monto: tx.monto,
+          moneda: tx.moneda,
+          montoLocal: tx.montoLocal,
+          monedaLocal: tx.monedaLocal,
+          fechaInicio,
+          fechaFinPeriodo,
+          fechaProximoCobro: fechaFinPeriodo,
+          autoRenovar: true,
+        },
+        update: {
+          plan: TipoPlan.MAESTRO_PRO,
+          estado: EstadoSuscripcion.ACTIVA,
+          proveedor: proveedorNombre,
+          idSuscripcionExterna: idSuscripcionExterna || tx.idTransaccionExterna,
+          fechaFinPeriodo,
+          fechaProximoCobro: fechaFinPeriodo,
+          fechaFinGracia: null,
+        },
+      }),
+      this.prisma.organizacion.update({
+        where: { idOrganizacion: tx.idOrganizacion },
+        data: {
+          plan: TipoPlan.MAESTRO_PRO,
+          limiteEvaluaciones: 99999,
+          limiteCorreccionesIaMes: 99999,
+          diasCaducidadEvaluacion: 99999,
+          esContenidoPrivado: true,
+          iaHabilitada: true,
+        },
+      }),
+    ]);
+
+    this.logger.log(`[Suscripción Activada] Institución ${tx.idOrganizacion} actualizada a Plan MAESTRO_PRO.`);
+  }
+
+  private async rechazarTransaccionAtomica(tx: any, motivoFallo?: string) {
+    const fechaFinGracia = new Date();
+    fechaFinGracia.setDate(fechaFinGracia.getDate() + 7);
+
+    await this.prisma.$transaction([
+      this.prisma.transaccionPago.update({
+        where: { idTransaccion: tx.idTransaccion },
+        data: {
+          estado: EstadoPagoTransaccion.RECHAZADO,
+          detalleError: motivoFallo || 'Pago rechazado por el procesador',
+        },
+      }),
+      this.prisma.suscripcionOrganizacion.updateMany({
+        where: { idOrganizacion: tx.idOrganizacion },
+        data: {
+          estado: EstadoSuscripcion.EN_PERIODO_GRACIA,
+          fechaFinGracia,
+        },
+      }),
+    ]);
+  }
+
+
 
   // ─────────────────────────────────────────────────────────────────
   // OBTENER ESTADO DE SUSCRIPCIÓN DE LA INSTITUCIÓN

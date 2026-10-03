@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -79,6 +79,59 @@ export default function DocenteOrganizacionPage() {
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // CAPTURA DE RETORNO DE PAYPAL
+  // ───────────────────────────────────────────────────────────────────────────
+  const capturaEnProgreso = useRef(false);
+  const [errorCapturaPayPal, setErrorCapturaPayPal] = useState<string | null>(null);
+
+  const intentarCapturaPayPal = useCallback(async (paypalToken: string) => {
+    mostrarMensaje('ok', 'Procesando pago de PayPal, por favor espera...');
+    setCargandoCheckout(true);
+    setErrorCapturaPayPal(null);
+    try {
+      const auth = getToken();
+      const res = await fetch(`${API}/pagos/paypal/${paypalToken}/capturar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${auth}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        mostrarMensaje('ok', data.mensaje || '¡Pago de PayPal capturado con éxito!');
+        await cargarDatos();
+        // Limpiar URL SÓLO si hubo éxito para no perder el token si hay fallo de red o API
+        router.replace(window.location.pathname, { scroll: false });
+      } else {
+        mostrarMensaje('error', data.message || 'Error al capturar el pago.');
+        setErrorCapturaPayPal(paypalToken);
+        capturaEnProgreso.current = false; // Permitir reintento
+      }
+    } catch (err: any) {
+      mostrarMensaje('error', 'Error de conexión al capturar el pago.');
+      setErrorCapturaPayPal(paypalToken);
+      capturaEnProgreso.current = false;
+    } finally {
+      setCargandoCheckout(false);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const paypalToken = urlParams.get('token');
+    const esExito = urlParams.get('pago') === 'exito';
+
+    if (paypalToken && esExito && !capturaEnProgreso.current) {
+      capturaEnProgreso.current = true;
+      if (tab !== 'suscripcion') {
+        setTab('suscripcion');
+      }
+      intentarCapturaPayPal(paypalToken);
+    }
+  }, [router, tab, intentarCapturaPayPal]);
+
+  // ───────────────────────────────────────────────────────────────────────────
 
   const handleInvitar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -230,8 +283,8 @@ export default function DocenteOrganizacionPage() {
           await cargarDatos();
           return;
         }
-        if (data.redirectUrl) {
-          setCheckoutUrl(data.redirectUrl);
+        if (data.urlCheckout) {
+          setCheckoutUrl(data.urlCheckout);
           mostrarMensaje('ok', 'Sesión de pago creada. Redirige al proveedor de pago.');
         } else if (data.estado === 'APROBADO') {
           mostrarMensaje('ok', '¡Pago de prueba aprobado! Tu plan ha sido actualizado.');
@@ -243,7 +296,7 @@ export default function DocenteOrganizacionPage() {
       } else {
         mostrarMensaje('error', data.message || 'Error al crear sesión de pago.');
       }
-    } catch (err) {
+    } catch (err: any) {
       mostrarMensaje('error', 'Error de conexión al iniciar pago.');
     } finally {
       setCargandoCheckout(false);
@@ -374,6 +427,20 @@ export default function DocenteOrganizacionPage() {
         {/* TAB: SUSCRIPCIÓN Y PAGOS */}
         {tab === 'suscripcion' && (
           <div className="space-y-6">
+            {errorCapturaPayPal && (
+               <div className="bg-red-50 p-4 rounded-lg flex flex-col md:flex-row items-center justify-between border border-red-200">
+                  <span className="text-sm text-red-800 font-medium mb-3 md:mb-0">
+                    Ocurrió un error al procesar el retorno de PayPal. Tu pago podría estar aprobado.
+                  </span>
+                  <button 
+                    onClick={() => intentarCapturaPayPal(errorCapturaPayPal)}
+                    className="px-4 py-2 bg-red-600 text-white rounded-md text-sm font-semibold hover:bg-red-700"
+                  >
+                    Reintentar Confirmación
+                  </button>
+               </div>
+            )}
+            
             {/* Estado actual del plan */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

@@ -25,7 +25,10 @@ export interface WebhookVerificationResult {
   evento: string;
   idTransaccionExterna?: string;
   idSuscripcionExterna?: string;
+  /** Monto reportado por el proveedor. SIEMPRE acompañado de 'moneda'. */
   monto?: number;
+  /** Moneda ISO-4217 del monto reportado (USD, BOB, etc.). Requerido si monto está presente. */
+  moneda?: string;
   estadoPago?: 'APROBADO' | 'RECHAZADO' | 'PENDIENTE';
   motivoFallo?: string;
 }

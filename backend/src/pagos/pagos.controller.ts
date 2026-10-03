@@ -58,6 +58,14 @@ export class PagosController {
     return this.pagosService.aprobarPagoSandbox(idOrganizacion, Number(idTransaccion));
   }
 
+  @Post('paypal/:idTransaccionExterna/capturar')
+  @UseGuards(AuthGuard('jwt'))
+  async capturarPagoPayPal(@Request() req: any, @Param('idTransaccionExterna') idTransaccionExterna: string) {
+    const idUsuario = Number(req.user.sub);
+    const idOrganizacion = await this.obtenerIdOrganizacionUsuario(idUsuario);
+    return this.pagosService.capturarPagoPayPal(idOrganizacion, idTransaccionExterna);
+  }
+
   @Post('webhook/:proveedor')
   async procesarWebhook(
     @Param('proveedor') proveedorStr: string,

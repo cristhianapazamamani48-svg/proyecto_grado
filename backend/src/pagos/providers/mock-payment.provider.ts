@@ -31,15 +31,54 @@ export class MockPaymentProvider implements PaymentProvider {
   }
 
   async verificarWebhooks(body: any, headers: any): Promise<WebhookVerificationResult> {
-    const tokenPrueba = headers['x-mock-signature'] || body?.tokenSimulacion;
-    const esValido = tokenPrueba !== 'INVALID';
+    const isProd = process.env.NODE_ENV === 'production';
+
+    // MOCK_SANDBOX completamente deshabilitado en producción
+    if (isProd) {
+      this.logger.error('[MockPaymentSandbox] Intento de webhook mock en PRODUCCIÓN. Rechazado.');
+      return { valido: false, evento: 'rejected' };
+    }
+
+    const tokenEsperado = process.env.MOCK_WEBHOOK_SECRET;
+
+    // En cualquier entorno no-producción, el secreto sigue siendo obligatorio.
+    if (!tokenEsperado) {
+      this.logger.error('[MockPaymentSandbox] MOCK_WEBHOOK_SECRET no está configurado. Rechazando webhook.');
+      return { valido: false, evento: 'config_error' };
+    }
+
+    const tokenPrueba: string | undefined = headers['x-mock-signature'] ?? body?.tokenSimulacion;
+
+    // No registrar el valor recibido para evitar exposición en logs
+    if (!tokenPrueba) {
+      this.logger.warn('[MockPaymentSandbox] Firma/token ausente.');
+      return { valido: false, evento: 'rejected' };
+    }
+
+    // timingSafeEqual REQUIERE que ambos buffers tengan la misma longitud.
+    // Si difieren, la firma ya es inválida — no lanzar TypeError (error 500).
+    const bufEsperado = Buffer.from(tokenEsperado);
+    const bufPrueba = Buffer.from(tokenPrueba);
+
+    if (bufEsperado.length !== bufPrueba.length || !crypto.timingSafeEqual(bufEsperado, bufPrueba)) {
+      this.logger.warn('[MockPaymentSandbox] Firma/token inválido.');
+      return { valido: false, evento: 'rejected' };
+    }
+
+    // Para el Mock, el monto y moneda DEBEN estar presentes en el body;
+    // nunca se asumen valores por defecto que podrían enmascarar errores.
+    if (body?.monto === undefined || body?.monto === null) {
+      this.logger.warn('[MockPaymentSandbox] Webhook mock sin campo monto. Rechazando.');
+      return { valido: false, evento: 'missing_monto' };
+    }
 
     return {
-      valido: esValido,
+      valido: true,
       evento: body?.evento || 'payment.approved',
-      idTransaccionExterna: body?.idTransaccionExterna || `mock_tx_${Date.now()}`,
+      idTransaccionExterna: body?.idTransaccionExterna,
       idSuscripcionExterna: body?.idSuscripcionExterna || `mock_sub_${Date.now()}`,
-      monto: body?.monto || 50,
+      monto: Number(body.monto),
+      moneda: (body?.moneda as string | undefined) || 'BOB',
       estadoPago: body?.estadoPago || 'APROBADO',
       motivoFallo: body?.motivoFallo,
     };
