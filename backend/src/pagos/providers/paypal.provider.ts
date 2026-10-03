@@ -62,86 +62,102 @@ export class PayPalProvider implements PaymentProvider {
       throw new Error('PayPal no está configurado (faltan credenciales). Selecciona el proveedor de prueba (MOCK_SANDBOX).');
     }
 
-    // Crear orden real en PayPal
     const token = await this.obtenerTokenPayPal(clientId, clientSecret);
+    const planId = await this.obtenerOcrearPlan(token, params);
 
-    const res = await fetch(`${this.apiBase}/v2/checkout/orders`, {
+    const res = await fetch(`${this.apiBase}/v1/billing/subscriptions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'PayPal-Request-Id': `uub-${params.idOrganizacion}-${Date.now()}`,
       },
       body: JSON.stringify({
-        intent: 'CAPTURE',
-        purchase_units: [
-          {
-            reference_id: `org_${params.idOrganizacion}`,
-            description: `Proyecto UUB - Plan ${params.plan}`,
-            amount: {
-              currency_code: 'USD',
-              value: params.montoUsd.toFixed(2),
-            },
-          },
-        ],
+        plan_id: planId,
         application_context: {
+          brand_name: 'Proyecto UUB',
+          locale: 'es-ES',
+          shipping_preference: 'NO_SHIPPING',
+          user_action: 'SUBSCRIBE_NOW',
           return_url: params.urlRetornoSuccess,
           cancel_url: params.urlRetornoCancel,
-          brand_name: 'Proyecto UUB',
-          user_action: 'PAY_NOW',
         },
       }),
     });
 
     if (!res.ok) {
       const err = await res.text();
-      this.logger.error(`PayPal Orders API error ${res.status}: ${err}`);
-      throw new Error('No se pudo crear la sesión de pago con PayPal.');
+      this.logger.error(`PayPal Subscription API error ${res.status}: ${err}`);
+      throw new Error('No se pudo crear la suscripción con PayPal.');
     }
 
-    const order = await res.json();
-    const approveLink = order.links?.find((l: any) => l.rel === 'approve')?.href;
+    const sub = await res.json();
+    const approveLink = sub.links?.find((l: any) => l.rel === 'approve')?.href;
 
-    if (!approveLink || !order.id) {
-      throw new Error('PayPal no devolvió link de aprobación o ID de orden.');
+    if (!approveLink || !sub.id) {
+      throw new Error('PayPal no devolvió link de aprobación o ID de suscripción.');
     }
 
-    this.logger.log(`[PayPal] Orden real creada: ${order.id}`);
+    this.logger.log(`[PayPal] Suscripción real creada: ${sub.id}`);
 
     return {
       urlCheckout: approveLink,
-      idTransaccionExterna: order.id as string,
+      idTransaccionExterna: sub.id as string,
       proveedor: this.nombreProveedor,
-      metodoPago: this.isSandbox ? 'PAYPAL_SANDBOX' : 'PAYPAL_LIVE',
+      metodoPago: this.isSandbox ? 'PAYPAL_SANDBOX_SUB' : 'PAYPAL_LIVE_SUB',
     };
   }
 
-  async capturarOrden(orderId: string): Promise<any> {
-    const clientId = process.env.PAYPAL_CLIENT_ID;
-    const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  private async obtenerOcrearPlan(token: string, params: CheckoutParams): Promise<string> {
+    if (process.env.PAYPAL_PLAN_ID) return process.env.PAYPAL_PLAN_ID;
     
-    if (!clientId || !clientSecret) {
-      throw new Error('PayPal no está configurado.');
-    }
-
-    const token = await this.obtenerTokenPayPal(clientId, clientSecret);
-    const res = await fetch(`${this.apiBase}/v2/checkout/orders/${orderId}/capture`, {
+    // Crear producto temporal si no hay plan
+    const productId = `uub_prod_${Date.now()}`;
+    await fetch(`${this.apiBase}/v1/catalogs/products`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: productId,
+        name: 'UUB Maestro Pro',
+        description: 'Suscripción mensual al software UUB',
+        type: 'DIGITAL',
+        category: 'SOFTWARE'
+      }),
+    });
+    
+    // Crear plan
+    const res = await fetch(`${this.apiBase}/v1/billing/plans`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        product_id: productId,
+        name: `Plan Maestro Pro - $${params.montoUsd}`,
+        description: 'Cobro mensual recurrente',
+        status: 'ACTIVE',
+        billing_cycles: [{
+          frequency: { interval_unit: 'MONTH', interval_count: 1 },
+          tenure_type: 'REGULAR',
+          sequence: 1,
+          total_cycles: 0,
+          pricing_scheme: {
+            fixed_price: { value: params.montoUsd.toString(), currency_code: 'USD' }
+          }
+        }],
+        payment_preferences: {
+          auto_bill_outstanding: true,
+          setup_fee: { value: '0', currency_code: 'USD' },
+          setup_fee_failure_action: 'CONTINUE',
+          payment_failure_threshold: 3
+        }
+      }),
     });
 
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`PayPal Capture API error ${res.status}: ${err}`);
-    }
-
-    return res.json();
+    if (!res.ok) throw new Error('No se pudo inicializar un plan de facturación de PayPal');
+    const plan = await res.json();
+    this.logger.log(`[PayPal] Nuevo plan recurrente creado dinámicamente: ${plan.id}`);
+    return plan.id;
   }
 
-  async consultarOrden(orderId: string): Promise<any> {
+  async consultarSuscripcion(idSuscripcion: string): Promise<any> {
     const clientId = process.env.PAYPAL_CLIENT_ID;
     const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
     
@@ -150,18 +166,15 @@ export class PayPalProvider implements PaymentProvider {
     }
 
     const token = await this.obtenerTokenPayPal(clientId, clientSecret);
-    const res = await fetch(`${this.apiBase}/v2/checkout/orders/${orderId}`, {
+    const res = await fetch(`${this.apiBase}/v1/billing/subscriptions/${idSuscripcion}`, {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`PayPal Order Check API error ${res.status}: ${err}`);
+      throw new Error(`PayPal API GET subscription error ${res.status}: ${err}`);
     }
-
     return res.json();
   }
 
@@ -222,72 +235,95 @@ export class PayPalProvider implements PaymentProvider {
       return { valido: false, evento: 'signature_error' };
     }
 
-    // ── Consultar la API de PayPal para estado autoritativo ──────────
     const eventType = body?.event_type as string | undefined;
-    const captureId = body?.resource?.id as string | undefined;
+    let estadoPago: 'APROBADO' | 'RECHAZADO' | 'PENDIENTE' | 'CANCELADO' | 'SUSPENDIDO' = 'PENDIENTE';
+    let monto = 0;
+    let moneda = 'USD';
+    let motivoFallo = body?.summary;
 
-    if (!captureId) {
-      this.logger.warn('[PayPal] Webhook sin resource.id (capture ID). Rechazando.');
-      return { valido: false, evento: 'missing_capture_id' };
-    }
+    let idTransaccionExterna = body?.resource?.id;
+    let idSuscripcionExterna = body?.resource?.id;
 
-    let estadoPago: 'APROBADO' | 'RECHAZADO' | 'PENDIENTE';
-    let monto: number;
-    let motivoFallo: string | undefined;
-
-    try {
-      const token = await this.obtenerTokenPayPal(clientId, clientSecret);
-      const captureRes = await fetch(`${this.apiBase}/v2/payments/captures/${captureId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!captureRes.ok) {
-        this.logger.error(`[PayPal] API captures devolvió ${captureRes.status} para ${captureId}.`);
-        return { valido: false, evento: 'api_error' };
-      }
-
-      const capture = await captureRes.json();
-
-      // Solo COMPLETED con evento correcto es APROBADO
-      if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && capture.status === 'COMPLETED') {
+    if (eventType === 'BILLING.SUBSCRIPTION.ACTIVATED' || eventType === 'PAYMENT.SALE.COMPLETED') {
         estadoPago = 'APROBADO';
-      } else if (
-        capture.status === 'DECLINED' ||
-        eventType === 'PAYMENT.CAPTURE.DENIED' ||
-        eventType === 'PAYMENT.CAPTURE.REVERSED'
-      ) {
-        estadoPago = 'RECHAZADO';
-        motivoFallo = capture.status_details?.reason || capture.status;
-      } else {
-        estadoPago = 'PENDIENTE';
-      }
 
-      // Monto obligatorio desde la API
-      const valorMonto = capture.amount?.value;
-      if (valorMonto === undefined || valorMonto === null) {
-        this.logger.error(`[PayPal] API no devolvió amount.value para capture ${captureId}.`);
-        return { valido: false, evento: 'missing_amount_from_api' };
-      }
-      monto = Number(valorMonto);
-    } catch (err) {
-      this.logger.error('[PayPal] Error al consultar capture API:', err);
-      return { valido: false, evento: 'api_error' };
+        if (eventType === 'PAYMENT.SALE.COMPLETED') {
+            idSuscripcionExterna = body?.resource?.billing_agreement_id;
+            idTransaccionExterna = body?.resource?.id; // ID del cobro individual de renovación
+            if (body?.resource?.amount) {
+               monto = Number(body.resource.amount.total);
+               moneda = body.resource.amount.currency;
+            } else {
+               return { valido: false, evento: 'missing_amount_from_api' };
+            }
+        } else {
+           try {
+              const sub = await this.consultarSuscripcion(idSuscripcionExterna);
+              if (sub.status !== 'ACTIVE') estadoPago = 'PENDIENTE';
+
+              if (sub.billing_info?.last_payment) {
+                 monto = Number(sub.billing_info.last_payment.amount.value);
+                 moneda = sub.billing_info.last_payment.amount.currency_code;
+              } else {
+                 return { valido: false, evento: 'missing_amount_from_api' };
+              }
+           } catch (e) {
+              return { valido: false, evento: 'api_error' };
+           }
+        }
+    } else if (eventType === 'BILLING.SUBSCRIPTION.CANCELLED') {
+        // Cancelación del acuerdo: no rechaza TX, debe actualizar el estado de la suscripción
+        estadoPago = 'CANCELADO';
+        motivoFallo = 'Suscripción cancelada desde PayPal';
+    } else if (eventType === 'BILLING.SUBSCRIPTION.SUSPENDED') {
+        // Suspensión por falta de pago repetido
+        estadoPago = 'SUSPENDIDO';
+        motivoFallo = 'Suscripción suspendida por PayPal';
+    } else if (eventType === 'PAYMENT.SALE.DENIED' || eventType === 'PAYMENT.SALE.REVERSED') {
+        estadoPago = 'RECHAZADO';
+        idSuscripcionExterna = body?.resource?.billing_agreement_id;
+        idTransaccionExterna = body?.resource?.id;
+    } else {
+        return { valido: false, evento: 'ignored_event' };
     }
+
+    if (!idSuscripcionExterna) return { valido: false, evento: 'missing_subscription_id' };
 
     return {
       valido: true,
-      evento: eventType || 'unknown',
-      idTransaccionExterna: body?.resource?.supplementary_data?.related_ids?.order_id || captureId,
-      idSuscripcionExterna: body?.resource?.billing_agreement_id,
+      evento: eventType,
+      idTransaccionExterna: idTransaccionExterna || idSuscripcionExterna,
+      idSuscripcionExterna: idSuscripcionExterna,
       monto,
-      moneda: 'USD', // PayPal siempre reporta en USD
+      moneda,
       estadoPago,
       motivoFallo,
     };
   }
 
   async cancelarSuscripcion(idSuscripcionExterna: string): Promise<boolean> {
-    this.logger.log(`[PayPal] Suscripción cancelada en PayPal: ${idSuscripcionExterna}`);
-    return true;
+    const clientId = process.env.PAYPAL_CLIENT_ID;
+    const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return false;
+
+    try {
+      const token = await this.obtenerTokenPayPal(clientId, clientSecret);
+      const res = await fetch(`${this.apiBase}/v1/billing/subscriptions/${idSuscripcionExterna}/cancel`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ reason: 'Cancelado por el usuario.' })
+      });
+      if (res.status === 204 || res.ok) {
+         this.logger.log(`[PayPal] Suscripción cancelada exitosamente: ${idSuscripcionExterna}`);
+         return true;
+      }
+      return false;
+    } catch (e) {
+      this.logger.error(`[PayPal] Falló la cancelación de suscripción: ${e}`);
+      return false;
+    }
   }
 }

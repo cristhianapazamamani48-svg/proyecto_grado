@@ -26,7 +26,6 @@ export class MercadoPagoProvider implements PaymentProvider {
 
   async crearSesionCheckout(params: CheckoutParams): Promise<CheckoutResult> {
     const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
-    // Generar un ID único que usaremos como external_reference y idTransaccionExterna local
     const mpId = `mp_tx_${crypto.randomBytes(8).toString('hex')}`;
 
     if (!accessToken) {
@@ -34,32 +33,24 @@ export class MercadoPagoProvider implements PaymentProvider {
     }
 
     try {
-      const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
+      const response = await fetch('https://api.mercadopago.com/preapproval', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
-          items: [
-            {
-              title: `Proyecto UUB - Plan ${params.plan}`,
-              quantity: 1,
-              unit_price: params.montoLocal || params.montoUsd,
-              currency_id: params.monedaLocal || 'BOB',
-            },
-          ],
-          payer: {
-            email: params.correoUsuario,
-            name: params.nombreUsuario,
+          reason: `Proyecto UUB - Plan ${params.plan}`,
+          external_reference: mpId,
+          payer_email: params.correoUsuario,
+          auto_recurring: {
+            frequency: 1,
+            frequency_type: 'months',
+            transaction_amount: params.montoLocal || params.montoUsd,
+            currency_id: params.monedaLocal || 'BOB',
           },
-          back_urls: {
-            success: params.urlRetornoSuccess,
-            failure: params.urlRetornoCancel,
-            pending: params.urlRetornoSuccess,
-          },
-          auto_return: 'approved',
-          external_reference: mpId, // Pasar nuestro ID como referencia externa
+          back_url: params.urlRetornoSuccess,
+          status: 'pending',
         }),
       });
 
@@ -67,16 +58,16 @@ export class MercadoPagoProvider implements PaymentProvider {
       if (response.ok && data.init_point) {
         return {
           urlCheckout: process.env.MERCADOPAGO_SANDBOX === 'true' ? data.sandbox_init_point : data.init_point,
-          idTransaccionExterna: mpId, // Usar nuestro ID, no el de la preferencia (data.id)
+          idTransaccionExterna: mpId,
           proveedor: this.nombreProveedor,
-          metodoPago: 'MERCADOPAGO_DIRECT',
+          metodoPago: 'MERCADOPAGO_SUBSCRIPTION',
         };
       } else {
         throw new Error(`La API de Mercado Pago devolvió un error: ${JSON.stringify(data)}`);
       }
     } catch (err: any) {
-      this.logger.error('Error al conectar con la API de Mercado Pago:', err);
-      throw new Error(`Fallo al crear la preferencia de Mercado Pago: ${err.message}`);
+      this.logger.error('Error al conectar con la API de Mercado Pago (preapproval):', err);
+      throw new Error(`Fallo al crear la suscripción de Mercado Pago: ${err.message}`);
     }
   }
 
@@ -85,113 +76,151 @@ export class MercadoPagoProvider implements PaymentProvider {
     const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
     const signature = headers['x-signature'] as string | undefined;
 
-    // Tanto el secreto de webhook como el token de acceso son obligatorios
-    if (!secret) {
-      this.logger.error('[MercadoPago] MERCADOPAGO_WEBHOOK_SECRET no configurado. Rechazando webhook.');
+    if (!secret || !accessToken) {
+      this.logger.error('[MercadoPago] Credenciales incompletas. Rechazando webhook.');
       return { valido: false, evento: 'config_error' };
     }
-    if (!accessToken) {
-      this.logger.error('[MercadoPago] MERCADOPAGO_ACCESS_TOKEN no configurado. No se puede consultar la API para verificar. Rechazando webhook.');
-      return { valido: false, evento: 'config_error' };
-    }
-
-    // La firma x-signature es siempre obligatoria
     if (!signature) {
-      this.logger.warn('[MercadoPago] Webhook recibido sin cabecera x-signature. Rechazando.');
       return { valido: false, evento: 'missing_signature' };
     }
 
-    // Verificar la firma HMAC SHA256
     try {
       const parts = signature.split(',');
       const ts = parts.find((p) => p.startsWith('ts='))?.split('=')[1];
       const v1 = parts.find((p) => p.startsWith('v1='))?.split('=')[1];
 
-      if (!ts || !v1) {
-        this.logger.warn('[MercadoPago] Formato de x-signature inválido. Rechazando.');
-        return { valido: false, evento: 'invalid_signature_format' };
-      }
+      if (!ts || !v1) return { valido: false, evento: 'invalid_signature_format' };
 
       const manifest = `id:${body?.data?.id};request-id:${headers['x-request-id']};ts:${ts};`;
       const hmac = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
-
-      // timingSafeEqual requiere igual longitud — v1 siempre es hex de 64 chars,
-      // hmac también; si difieren en longitud ya es inválido
       const bufHmac = Buffer.from(hmac, 'hex');
       const bufV1 = Buffer.from(v1, 'hex');
       if (bufHmac.length !== bufV1.length || !crypto.timingSafeEqual(bufHmac, bufV1)) {
-        this.logger.warn('[MercadoPago] Firma HMAC no coincide. Webhook rechazado.');
         return { valido: false, evento: 'invalid_signature' };
       }
     } catch (err) {
-      this.logger.error('[MercadoPago] Error al verificar firma HMAC:', err);
       return { valido: false, evento: 'signature_error' };
     }
 
-    // ── Consultar la API oficial de MP para obtener estado autoritativo ──
-    const pagoId = body?.data?.id;
-    if (!pagoId) {
-      this.logger.warn('[MercadoPago] Webhook sin ID de pago en body.data.id. Rechazando.');
-      return { valido: false, evento: 'missing_payment_id' };
-    }
+    // El evento puede ser de pago o de suscripción. MP distingue entre:
+    //   - type="subscription_preapproval": evento del acuerdo de suscripción (autorizado/cancelado)
+    //   - type="subscription_authorized_payment" o type="payment": cobro individual (aprobado/rechazado)
+    const id = body?.data?.id;
+    if (!id) return { valido: false, evento: 'missing_id' };
 
-    let estadoPago: 'APROBADO' | 'RECHAZADO' | 'PENDIENTE';
-    let monto: number;
-    let moneda: string;
+    let estadoPago: 'APROBADO' | 'RECHAZADO' | 'PENDIENTE' | 'CANCELADO' | 'SUSPENDIDO' = 'PENDIENTE';
+    let monto: number = 0;
+    let moneda: string = '';
     let motivoFallo: string | undefined;
+    let idTransaccionExterna = String(id);
+    let idSuscripcionExterna = String(id);
+    let referenciaExternaOriginal: string | undefined;
 
     try {
-      const apiRes = await fetch(`https://api.mercadopago.com/v1/payments/${pagoId}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      if (body?.type === 'subscription_preapproval') {
+        // Evento del acuerdo de suscripción: creación o cancelación del acuerdo
+        const apiRes = await fetch(`https://api.mercadopago.com/preapproval/${id}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!apiRes.ok) return { valido: false, evento: 'api_error' };
 
-      if (!apiRes.ok) {
-        this.logger.error(`[MercadoPago] API de pagos devolvió ${apiRes.status} para pago ${pagoId}.`);
-        return { valido: false, evento: 'api_error' };
-      }
+        const sub = await apiRes.json();
+        // "authorized" = acuerdo creado pero aún no hay cobro exitoso → PENDIENTE
+        // "cancelled"  = suscripción cancelada externamente → CANCELADO (no rechaza TX, actualiza sub)
+        if (sub.status === 'authorized') {
+          estadoPago = 'PENDIENTE';
+          // CRÍTICO: idTransaccionExterna = external_reference (el mp_tx_... guardado al crear la TX)
+          // para que el servicio encuentre la TX pendiente del checkout y la rebindee.
+          // idSuscripcionExterna = ID real del preapproval MP, que se usará como nuevo vínculo.
+          idTransaccionExterna = sub.external_reference || String(id);
+          idSuscripcionExterna  = String(id);
+        } else if (sub.status === 'cancelled') {
+          estadoPago = 'CANCELADO';
+          motivoFallo = 'Suscripción cancelada desde Mercado Pago';
+          // Para CANCELADO el servicio solo necesita idSuscripcionExterna para hallar suscripcionOrganizacion.
+          idTransaccionExterna = String(id);
+          idSuscripcionExterna  = String(id);
+        }
 
-      const pago = await apiRes.json();
+        if (sub.auto_recurring) {
+          monto = Number(sub.auto_recurring.transaction_amount);
+          moneda = sub.auto_recurring.currency_id;
+        } else {
+          return { valido: false, evento: 'missing_amount_from_api' };
+        }
 
-      // Determinar estado solo desde la API — nunca del body del webhook
-      if (pago.status === 'approved') {
-        estadoPago = 'APROBADO';
-      } else if (pago.status === 'rejected' || pago.status === 'cancelled') {
-        estadoPago = 'RECHAZADO';
-        motivoFallo = pago.status_detail || pago.status;
       } else {
-        estadoPago = 'PENDIENTE';
+        // Cobro individual: puede ser subscription_authorized_payment o un pago regular
+        const esCobroSuscripcion = body?.type === 'subscription_authorized_payment';
+        const endpoint = esCobroSuscripcion
+          ? `https://api.mercadopago.com/authorized_payments/${id}`
+          : `https://api.mercadopago.com/v1/payments/${id}`;
+
+        const apiRes = await fetch(endpoint, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!apiRes.ok) return { valido: false, evento: 'api_error' };
+
+        const pago = await apiRes.json();
+
+        if (pago.status === 'approved') estadoPago = 'APROBADO';
+        else if (pago.status === 'rejected' || pago.status === 'cancelled') {
+          estadoPago = 'RECHAZADO';
+          motivoFallo = pago.status_detail || pago.status;
+        }
+
+        if (pago.transaction_amount === undefined || pago.transaction_amount === null) {
+          return { valido: false, evento: 'missing_amount_from_api' };
+        }
+        if (!pago.currency_id) return { valido: false, evento: 'missing_currency_from_api' };
+
+        monto = Number(pago.transaction_amount);
+        moneda = pago.currency_id;
+
+        // CRÍTICO: idTransaccionExterna = ID del cobro individual
+        idTransaccionExterna = String(id);
+
+        // idSuscripcionExterna = preapproval_id del cobro (enlaza con la suscripción maestra)
+        idSuscripcionExterna = pago.preapproval_id || body?.preapproval_id || String(id);
+        
+        // Referencia original para solucionar desorden temporal (si el cobro llega antes que el preapproval)
+        referenciaExternaOriginal = pago.external_reference;
       }
 
-      // Monto y moneda de la API (obligatorios para aprobar)
-      if (pago.transaction_amount === undefined || pago.transaction_amount === null) {
-        this.logger.error(`[MercadoPago] API no devolvió transaction_amount para pago ${pagoId}.`);
-        return { valido: false, evento: 'missing_amount_from_api' };
-      }
-      if (!pago.currency_id) {
-        this.logger.error(`[MercadoPago] API no devolvió currency_id para pago ${pagoId}.`);
-        return { valido: false, evento: 'missing_currency_from_api' };
-      }
-      monto = Number(pago.transaction_amount);
-      moneda = pago.currency_id as string;
-      
       return {
         valido: true,
-        evento: body?.action || 'payment.updated',
-        idTransaccionExterna: pago.external_reference || String(pagoId),
-        idSuscripcionExterna: body?.preapproval_id,
+        evento: body?.action || body?.type || 'payment.updated',
+        idTransaccionExterna,
+        idSuscripcionExterna,
         monto,
         moneda,
         estadoPago,
         motivoFallo,
+        referenciaExternaOriginal,
       };
     } catch (err) {
-      this.logger.error('[MercadoPago] Error al consultar API de pagos:', err);
+      this.logger.error('[MercadoPago] Error al consultar API:', err);
       return { valido: false, evento: 'api_error' };
     }
   }
 
   async cancelarSuscripcion(idSuscripcionExterna: string): Promise<boolean> {
-    this.logger.log(`[MercadoPago] Suscripción cancelada en MP: ${idSuscripcionExterna}`);
-    return true;
+    const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+    if (!accessToken) return false;
+
+    try {
+      const response = await fetch(`https://api.mercadopago.com/preapproval/${idSuscripcionExterna}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ status: 'cancelled' }),
+      });
+      return response.ok;
+    } catch (err) {
+      this.logger.error(`[MercadoPago] Error cancelando suscripción ${idSuscripcionExterna}:`, err);
+      return false;
+    }
   }
 }

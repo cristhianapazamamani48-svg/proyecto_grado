@@ -29,8 +29,10 @@ export interface WebhookVerificationResult {
   monto?: number;
   /** Moneda ISO-4217 del monto reportado (USD, BOB, etc.). Requerido si monto está presente. */
   moneda?: string;
-  estadoPago?: 'APROBADO' | 'RECHAZADO' | 'PENDIENTE';
+  estadoPago?: 'APROBADO' | 'RECHAZADO' | 'PENDIENTE' | 'CANCELADO' | 'SUSPENDIDO';
   motivoFallo?: string;
+  /** El external_reference o ID original del checkout, útil si los webhooks llegan fuera de orden. */
+  referenciaExternaOriginal?: string;
 }
 
 export interface PaymentProvider {

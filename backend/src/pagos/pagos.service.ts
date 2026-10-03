@@ -164,21 +164,123 @@ export class PagosService {
       `[Webhook ${proveedorNombre}] Evento: ${verificacion.evento}, TX: ${verificacion.idTransaccionExterna}`,
     );
 
+    // ── Eventos de ciclo de vida de suscripción ───────────────────────
+    // CANCELADO y SUSPENDIDO actúan sobre la suscripción, NO sobre una transacción.
+    // Se procesan antes del lookup de TX para evitar la protección anti-degradación.
+    if (verificacion.estadoPago === 'CANCELADO' || verificacion.estadoPago === 'SUSPENDIDO') {
+      const nuevoEstado = verificacion.estadoPago === 'CANCELADO'
+        ? EstadoSuscripcion.CANCELADA
+        : EstadoSuscripcion.SUSPENDIDA_POR_PAGO;
+
+      const sub = await this.prisma.suscripcionOrganizacion.findFirst({
+        where: { idSuscripcionExterna: verificacion.idSuscripcionExterna },
+      });
+
+      if (!sub) {
+        this.logger.warn(
+          `[Ciclo vida ${verificacion.estadoPago}] No se encontró suscripción con ID externo ${verificacion.idSuscripcionExterna}. Ignorando.`,
+        );
+        return { recibido: true, estado: verificacion.estadoPago };
+      }
+
+      this.logger.log(
+        `[Ciclo vida] Suscripción ${sub.idSuscripcionExterna} → ${nuevoEstado} (org ${sub.idOrganizacion})`,
+      );
+
+      await this.prisma.suscripcionOrganizacion.update({
+        where: { idOrganizacion: sub.idOrganizacion },
+        data: {
+          estado: nuevoEstado,
+          autoRenovar: false,
+        },
+      });
+
+      return { recibido: true, estado: verificacion.estadoPago, idOrganizacion: sub.idOrganizacion };
+    }
+
     if (!verificacion.idTransaccionExterna) {
       throw new BadRequestException('El webhook no proporcionó un ID de transacción externa válido.');
     }
 
     // Buscar transacción existente exigiendo coincidencia exacta de proveedor e ID
-    const tx = await this.prisma.transaccionPago.findFirst({
+    let tx = await this.prisma.transaccionPago.findFirst({
       where: {
         proveedor: proveedorNombre,
         idTransaccionExterna: verificacion.idTransaccionExterna,
       },
     });
 
+    if (!tx && verificacion.idSuscripcionExterna) {
+      // Es posible que sea un webhook de renovación (nuevo ID de transacción pero ID de suscripción existente)
+      const sub = await this.prisma.suscripcionOrganizacion.findFirst({
+        where: { idSuscripcionExterna: verificacion.idSuscripcionExterna },
+      });
+
+      if (sub && verificacion.monto !== undefined) {
+         // Crear transacción de renovación
+         this.logger.log(`[Renovación] Creando transacción para suscripción ${sub.idSuscripcionExterna}`);
+         tx = await this.prisma.transaccionPago.create({
+            data: {
+               idOrganizacion: sub.idOrganizacion,
+               monto: verificacion.moneda === 'USD' ? verificacion.monto : (sub.monto || 0),
+               moneda: 'USD',
+               montoLocal: verificacion.moneda !== 'USD' ? verificacion.monto : (sub.montoLocal || 0),
+               monedaLocal: 'BOB',
+               estado: EstadoPagoTransaccion.PENDIENTE,
+               proveedor: proveedorNombre,
+               idTransaccionExterna: verificacion.idTransaccionExterna,
+               metodoPago: 'RENOVACION'
+            }
+         });
+      }
+    }
+
+    // ── 3er intento: TX PENDIENTE revinculada al preapproval ID (primer cobro MP) ───
+    // Flujo: subscription_preapproval authorized actualizó la TX cambiando su
+    // idTransaccionExterna de 'mp_tx_...' al preapproval_id real de MP.
+    // El primer cobro llega con idSuscripcionExterna = preapproval_id y un cobro id nuevo.
+    // Como la suscripcionOrganizacion todavía no existe, el 2do intento no la encuentra.
+    // Aquí buscamos la TX PENDIENTE cuyo idTransaccionExterna ya es el preapproval_id.
+    if (!tx && verificacion.idSuscripcionExterna) {
+      tx = await this.prisma.transaccionPago.findFirst({
+        where: {
+          proveedor: proveedorNombre,
+          idTransaccionExterna: verificacion.idSuscripcionExterna,
+          estado: EstadoPagoTransaccion.PENDIENTE,
+        },
+      });
+      if (tx) {
+        this.logger.log(
+          `[Primer cobro MP] TX ${tx.idTransaccion} encontrada por suscripción revinculada (${verificacion.idSuscripcionExterna}).`,
+        );
+      }
+    }
+
+    // ── 4to intento: TX PENDIENTE por referencia externa original (desorden temporal MP) ───
+    // Si el primer cobro llega antes que el preapproval, el preapproval ID no existe en la DB.
+    // Usamos el external_reference del pago (que es el mp_tx_... original) para encontrarla.
+    if (!tx && verificacion.referenciaExternaOriginal) {
+      tx = await this.prisma.transaccionPago.findFirst({
+        where: {
+          proveedor: proveedorNombre,
+          idTransaccionExterna: verificacion.referenciaExternaOriginal,
+          estado: EstadoPagoTransaccion.PENDIENTE,
+        },
+      });
+      if (tx) {
+        this.logger.log(
+          `[Desorden temporal MP] TX ${tx.idTransaccion} encontrada por referencia original (${verificacion.referenciaExternaOriginal}).`,
+        );
+        // Actualizamos en memoria para que aprobarTransaccionAtomica (o rechazar) lo guarde en BD
+        if (verificacion.idTransaccionExterna) {
+          tx.idTransaccionExterna = verificacion.idTransaccionExterna;
+        }
+      }
+    }
+
     if (!tx) {
       this.logger.warn(
-        `No se encontró transacción correspondiente al webhook. Proveedor: ${proveedorNombre}, ID Externa: ${verificacion.idTransaccionExterna}`,
+        `No se encontró transacción correspondiente al webhook ni suscripción activa. Proveedor: ${proveedorNombre}, ID Externa: ${verificacion.idTransaccionExterna}`,
       );
       // Los proveedores esperan HTTP 200/2xx aunque no encontremos el ID,
       // para no reintentar indefinidamente con el mismo webhook desconocido.
@@ -197,6 +299,7 @@ export class PagosService {
 
     // ── Protección contra eventos tardíos/fuera de orden ────────────
     // Un pago ya APROBADO nunca puede degradarse a RECHAZADO por un evento tardío.
+    // Nota: CANCELADO/SUSPENDIDO ya fueron manejados arriba y nunca llegan aquí.
     if (tx.estado === EstadoPagoTransaccion.APROBADO && verificacion.estadoPago === 'RECHAZADO') {
       this.logger.warn(
         `[Orden Temporal] TX ${tx.idTransaccionExterna} ya APROBADA recibió evento RECHAZADO tardío. Ignorado.`,
@@ -246,7 +349,24 @@ export class PagosService {
       return { recibido: true, estado: 'RECHAZADO', idOrganizacion: tx.idOrganizacion };
     }
 
-    return { recibido: true, estado: verificacion.estadoPago };
+    // ── Rebinding para subscription_preapproval authorized (Mercado Pago) ────
+    // Cuando el webhook authorized encuentra la TX por external_reference ('mp_tx_...'),
+    // actualizamos idTransaccionExterna al preapproval_id real de MP.
+    // Esto permite que el webhook del primer cobro (con un id de pago distinto)
+    // encuentre esta TX PENDIENTE en el 3er lookup.
+    if (verificacion.estadoPago === 'PENDIENTE'
+        && verificacion.idSuscripcionExterna
+        && tx.idTransaccionExterna !== verificacion.idSuscripcionExterna) {
+      await this.prisma.transaccionPago.update({
+        where: { idTransaccion: tx.idTransaccion },
+        data: { idTransaccionExterna: verificacion.idSuscripcionExterna },
+      });
+      this.logger.log(
+        `[Preapproval MP] TX ${tx.idTransaccion}: '${tx.idTransaccionExterna}' → '${verificacion.idSuscripcionExterna}'`,
+      );
+    }
+
+    return { recibido: true, estado: verificacion.estadoPago, idOrganizacion: tx.idOrganizacion };
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -272,72 +392,78 @@ export class PagosService {
       throw new BadRequestException('El pago ya fue rechazado anteriormente.');
     }
 
-    let order;
+    // Con el modelo de suscripciones PayPal no se "captura" — se verifica el estado
+    let sub;
     try {
-      order = await this.paypalProvider.consultarOrden(idTransaccionExterna);
+      sub = await this.paypalProvider.consultarSuscripcion(idTransaccionExterna);
     } catch (e: any) {
-      this.logger.error('Error al consultar estado de orden PayPal:', e);
-      throw new BadRequestException('No se pudo verificar el estado actual de la orden en PayPal.');
+      this.logger.error('Error al consultar suscripción PayPal:', e);
+      throw new BadRequestException('No se pudo verificar el estado actual de la suscripción en PayPal.');
     }
 
-    let captureDetails;
+    if (sub.status !== 'ACTIVE' && sub.status !== 'APPROVED') {
+      throw new BadRequestException(`La suscripción no está activa. Estado actual en PayPal: ${sub.status}`);
+    }
 
-    if (order.status === 'COMPLETED') {
-      // Ya había sido capturada (quizás un intento local falló a la mitad), recuperamos sus detalles
-      captureDetails = order.purchase_units?.[0]?.payments?.captures?.[0];
-      this.logger.log(`[PayPal] La orden ${idTransaccionExterna} ya estaba COMPLETED, reanudando activación local.`);
-    } else if (order.status === 'APPROVED') {
-      // El usuario aprobó el pago, lista para capturar remota y localmente
-      try {
-        const capture = await this.paypalProvider.capturarOrden(idTransaccionExterna);
-        if (capture.status !== 'COMPLETED') {
-          throw new BadRequestException(`El estado de la captura es ${capture.status}, se esperaba COMPLETED.`);
-        }
-        captureDetails = capture.purchase_units?.[0]?.payments?.captures?.[0];
-      } catch (e: any) {
-        this.logger.error('Error al capturar orden PayPal:', e);
-        throw new BadRequestException(e.message || 'No se pudo capturar la orden en PayPal.');
-      }
+    // Extraer monto del último pago o del plan
+    const lastPayment = sub.billing_info?.last_payment;
+    let monto: number;
+    let moneda: string;
+
+    if (lastPayment) {
+      monto = Number(lastPayment.amount.value);
+      moneda = lastPayment.amount.currency_code?.toUpperCase();
     } else {
-      throw new BadRequestException(`La orden no está en estado APPROVED ni COMPLETED. Estado actual: ${order.status}`);
+      // Si aún no hubo un cobro (suscripción APPROVED pero primer ciclo pendiente), usamos el monto esperado del plan
+      monto = Number(tx.monto);
+      moneda = tx.moneda?.toUpperCase() || 'USD';
     }
-
-    if (!captureDetails) {
-      throw new BadRequestException('PayPal no devolvió detalles de la captura.');
-    }
-
-    const monto = Number(captureDetails.amount?.value);
-    const moneda = captureDetails.amount?.currency_code?.toUpperCase();
 
     if (!moneda || isNaN(monto)) {
       throw new BadRequestException('PayPal no reportó monto o moneda válidos.');
     }
 
-    const montoEsperado = Number(tx.monto) || 0; // En DB se guarda en USD
+    const montoEsperado = Number(tx.monto) || 0;
     if (moneda !== 'USD' || Math.abs(monto - montoEsperado) > 0.1) {
-      throw new BadRequestException(
-        `Discrepancia de monto/moneda. Esperado: ${montoEsperado} USD. Recibido: ${monto} ${moneda}`,
-      );
+      // Si la suscripción está APPROVED (primer ciclo pendiente), permitir con monto 0 del plan
+      if (sub.status !== 'APPROVED') {
+        throw new BadRequestException(
+          `Discrepancia de monto/moneda. Esperado: ${montoEsperado} USD. Recibido: ${monto} ${moneda}`,
+        );
+      }
     }
 
-    await this.aprobarTransaccionAtomica(tx, ProveedorPago.PAYPAL, captureDetails.id);
+    await this.aprobarTransaccionAtomica(tx, ProveedorPago.PAYPAL, sub.id);
 
-    return { mensaje: 'Pago capturado y suscripción activada con éxito.' };
+    return { mensaje: 'Suscripción de PayPal activada con éxito.' };
   }
 
   // ─────────────────────────────────────────────────────────────────
   // HELPERS ATÓMICOS
   // ─────────────────────────────────────────────────────────────────
   private async aprobarTransaccionAtomica(tx: any, proveedorNombre: ProveedorPago, idSuscripcionExterna?: string) {
+    const subActual = await this.prisma.suscripcionOrganizacion.findUnique({
+      where: { idOrganizacion: tx.idOrganizacion }
+    });
+
     const fechaInicio = new Date();
     const fechaFinPeriodo = new Date();
-    fechaFinPeriodo.setFullYear(fechaFinPeriodo.getFullYear() + 1);
+    
+    if (subActual?.estado === EstadoSuscripcion.ACTIVA && subActual.fechaFinPeriodo && subActual.fechaFinPeriodo > new Date()) {
+      // Extender desde la fecha de expiración actual si aún está activa
+      fechaFinPeriodo.setTime(subActual.fechaFinPeriodo.getTime());
+      fechaFinPeriodo.setMonth(fechaFinPeriodo.getMonth() + 1);
+    } else {
+      // Si estaba vencida o en gracia, extender un mes desde hoy
+      fechaFinPeriodo.setMonth(fechaFinPeriodo.getMonth() + 1);
+    }
 
     await this.prisma.$transaction([
       this.prisma.transaccionPago.update({
         where: { idTransaccion: tx.idTransaccion },
         data: {
           estado: EstadoPagoTransaccion.APROBADO,
+          idTransaccionExterna: tx.idTransaccionExterna,
           firmaWebhook: `${proveedorNombre}:${tx.idTransaccionExterna}`.slice(0, 250),
         },
       }),
@@ -366,6 +492,7 @@ export class PagosService {
           fechaFinPeriodo,
           fechaProximoCobro: fechaFinPeriodo,
           fechaFinGracia: null,
+          autoRenovar: true,
         },
       }),
       this.prisma.organizacion.update({
@@ -393,6 +520,7 @@ export class PagosService {
         where: { idTransaccion: tx.idTransaccion },
         data: {
           estado: EstadoPagoTransaccion.RECHAZADO,
+          idTransaccionExterna: tx.idTransaccionExterna,
           detalleError: motivoFallo || 'Pago rechazado por el procesador',
         },
       }),
@@ -471,7 +599,10 @@ export class PagosService {
 
     if (sub.idSuscripcionExterna) {
       const provider = this.providers.get(sub.proveedor) || this.mockProvider;
-      await provider.cancelarSuscripcion(sub.idSuscripcionExterna);
+      const exito = await provider.cancelarSuscripcion(sub.idSuscripcionExterna);
+      if (!exito) {
+         throw new BadRequestException('El proveedor de pago no pudo procesar la cancelación. Inténtalo de nuevo más tarde.');
+      }
     }
 
     const subActualizada = await this.prisma.suscripcionOrganizacion.update({
@@ -506,6 +637,36 @@ export class PagosService {
       throw new ForbiddenException(
         'La suscripción de tu institución está suspendida por falta de pago. Por favor regulariza tu pago para continuar.',
       );
+    }
+
+    if (org.suscripcion?.estado === EstadoSuscripcion.EN_PERIODO_GRACIA && org.suscripcion.fechaFinGracia) {
+      if (new Date() > org.suscripcion.fechaFinGracia) {
+        // Podríamos actualizar el estado a SUSPENDIDA_POR_PAGO asíncronamente aquí
+        this.prisma.suscripcionOrganizacion.update({
+           where: { idOrganizacion: org.idOrganizacion },
+           data: { estado: EstadoSuscripcion.SUSPENDIDA_POR_PAGO }
+        }).catch(() => {});
+        throw new ForbiddenException('El período de gracia ha expirado. Por favor regulariza tu pago para continuar.');
+      }
+    }
+
+    if (org.suscripcion?.estado === EstadoSuscripcion.CANCELADA && org.suscripcion.fechaFinPeriodo) {
+       if (new Date() > org.suscripcion.fechaFinPeriodo) {
+         // Degradamos plan asíncronamente
+         this.prisma.organizacion.update({
+            where: { idOrganizacion: org.idOrganizacion },
+            data: { 
+               plan: 'GRATUITO',
+               limiteDocentes: 5,
+               limiteEvaluaciones: 20,
+               limiteCorreccionesIaMes: 10,
+            }
+         }).catch(() => {});
+         if (accion !== 'CREAR_EVALUACION') {
+           // Dejarlo pasar al siguiente check que mirará org.plan actualizado, o fallar
+           // Lo dejamos pasar porque los checks de abajo validan contra los límites actuales
+         }
+       }
     }
 
     if (accion === 'CREAR_EVALUACION') {

@@ -324,9 +324,12 @@ export default function DocenteOrganizacionPage() {
     }
   };
 
+  const [cargandoCancelacion, setCargandoCancelacion] = useState(false);
+
   const handleCancelarSuscripcion = async () => {
     if (!confirm('¿Estás seguro de que deseas cancelar la renovación automática? Mantendrás el acceso hasta el fin del período actual.')) return;
     const token = getToken();
+    setCargandoCancelacion(true);
     try {
       const res = await fetch(`${API}/pagos/cancelar`, {
         method: 'POST',
@@ -341,6 +344,8 @@ export default function DocenteOrganizacionPage() {
       }
     } catch (err) {
       mostrarMensaje('error', 'Error de conexión.');
+    } finally {
+      setCargandoCancelacion(false);
     }
   };
 
@@ -484,9 +489,9 @@ export default function DocenteOrganizacionPage() {
                 {suscripcion?.plan !== 'MAESTRO_PRO' || suscripcion?.estadoSuscripcion === 'CANCELADA' || suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA' ? (
                   <div className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white p-5 rounded-2xl shadow-lg min-w-[220px] text-center">
                     <p className="text-xs font-bold uppercase tracking-widest opacity-80">Plan Maestro Pro</p>
-                    <p className="text-3xl font-extrabold mt-1">Bs 50</p>
-                    <p className="text-xs opacity-75 mt-0.5">≈ $7.25 USD · Pago único</p>
-                    <p className="text-xs opacity-70 mt-1">Acceso ilimitado de por vida</p>
+                    <p className="text-3xl font-extrabold mt-1">Bs 50<span className="text-sm font-normal opacity-80"> / mes</span></p>
+                    <p className="text-xs opacity-75 mt-0.5">≈ $7.25 USD · Pago mensual</p>
+                    <p className="text-xs opacity-70 mt-1">Cancela cuando quieras</p>
                   </div>
                 ) : (
                   <div className="bg-green-50 border border-green-200 p-5 rounded-2xl text-center min-w-[180px]">
@@ -555,7 +560,7 @@ export default function DocenteOrganizacionPage() {
                 <div>
                   <h3 className="text-lg font-bold text-indigo-900">Actualizar al Plan Maestro Pro</h3>
                   <p className="text-sm text-indigo-700 mt-1">
-                    Acceso ilimitado a evaluaciones, créditos de IA, contenido privado y más funciones avanzadas por un pago único de <strong>Bs 50</strong>.
+                    Acceso ilimitado a evaluaciones, créditos de IA, contenido privado y más funciones avanzadas por un pago de <strong>Bs 50 al mes</strong>.
                   </p>
                 </div>
                 <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-indigo-800">
@@ -646,9 +651,10 @@ export default function DocenteOrganizacionPage() {
                   {suscripcion?.autoRenovar ? (
                     <button
                       onClick={handleCancelarSuscripcion}
-                      className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 font-semibold text-sm rounded-lg border border-red-200 transition"
+                      disabled={cargandoCancelacion}
+                      className="px-4 py-2 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-600 font-semibold text-sm rounded-lg border border-red-200 transition"
                     >
-                      Cancelar Renovación Automática
+                      {cargandoCancelacion ? 'Cancelando...' : 'Cancelar Renovación Automática'}
                     </button>
                   ) : (
                     <p className="text-sm text-slate-500">La renovación automática está desactivada. Seguirás con acceso Pro hasta el fin del período.</p>
