@@ -117,6 +117,10 @@ export class PagosService {
   }
 
   async aprobarPagoSandbox(idOrganizacion: number, idTransaccion: number) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new BadRequestException('Los pagos de prueba (Sandbox) están deshabilitados en el entorno de producción.');
+    }
+
     const transaccion = await this.prisma.transaccionPago.findFirst({
       where: {
         idTransaccion,
@@ -132,18 +136,17 @@ export class PagosService {
       throw new BadRequestException('Este pago de prueba ya fue procesado.');
     }
 
-    return this.procesarWebhook(
-      ProveedorPago.MOCK_SANDBOX,
-      {
-        idTransaccionExterna: transaccion.idTransaccionExterna,
-        idSuscripcionExterna: `mock_sub_${transaccion.idTransaccion}`,
-        monto: Number(transaccion.montoLocal || transaccion.monto),
-        moneda: transaccion.monedaLocal || 'BOB',
-        estadoPago: 'APROBADO',
-        evento: 'payment.approved',
-      },
-      { 'x-mock-signature': process.env.MOCK_WEBHOOK_SECRET || 'SANDBOX_USER_CONFIRMED' },
-    );
+    // Operación interna autenticada: evitamos verificarWebhooks y activamos directamente
+    const idSuscripcionExterna = `mock_sub_${transaccion.idTransaccion}`;
+    
+    await this.aprobarTransaccionAtomica(transaccion, ProveedorPago.MOCK_SANDBOX, idSuscripcionExterna);
+    
+    return { 
+      recibido: true, 
+      estado: 'APROBADO', 
+      idOrganizacion: transaccion.idOrganizacion,
+      mensaje: 'Pago Sandbox aprobado manualmente.'
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────

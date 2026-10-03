@@ -14,6 +14,10 @@ export class MockPaymentProvider implements PaymentProvider {
   readonly nombreProveedor = ProveedorPago.MOCK_SANDBOX;
 
   async crearSesionCheckout(params: CheckoutParams): Promise<CheckoutResult> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('La pasarela de pagos simulada (MOCK_SANDBOX) no está disponible en producción.');
+    }
+
     const mockId = `mock_tx_${crypto.randomBytes(8).toString('hex')}`;
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
     const urlCheckout = `${frontendUrl}/docente/organizacion?tab=suscripcion&mock_checkout=${mockId}&plan=${params.plan}`;

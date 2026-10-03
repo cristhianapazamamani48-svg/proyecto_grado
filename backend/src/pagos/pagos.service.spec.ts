@@ -695,3 +695,53 @@ describe('MercadoPagoProvider — Strict validation', () => {
     expect(r.evento).toBe('missing_currency_from_api');
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Suite 6: Sandbox (aprobarPagoSandbox)
+// ──────────────────────────────────────────────────────────────────────────────
+describe('PagosService — aprobarPagoSandbox', () => {
+  let service: PagosService;
+  let prisma: PrismaService;
+  let mockProv: MockPaymentProvider;
+
+  beforeEach(async () => {
+    const module = await buildModule();
+    service = module.get(PagosService);
+    prisma = module.get(PrismaService);
+    mockProv = module.get(MockPaymentProvider);
+  });
+
+  it('rechaza aprobarPagoSandbox si el entorno es producción', async () => {
+    process.env.NODE_ENV = 'production';
+    const tx = makeTx({ proveedor: ProveedorPago.MOCK_SANDBOX });
+    // No llegará a prisma.findFirst
+    await expect(service.aprobarPagoSandbox(tx.idOrganizacion, tx.idTransaccion)).rejects.toThrow(/deshabilitados/);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('aprueba la transacción usando aprobarTransaccionAtomica en desarrollo', async () => {
+    process.env.NODE_ENV = 'development';
+    const tx = makeTx({ proveedor: ProveedorPago.MOCK_SANDBOX });
+    (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(tx);
+    
+    const r = await service.aprobarPagoSandbox(tx.idOrganizacion, tx.idTransaccion);
+    
+    expect(r.estado).toBe('APROBADO');
+    expect(r.mensaje).toContain('Sandbox aprobado');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('el webhook público MOCK sigue bloqueado en producción', async () => {
+    process.env.NODE_ENV = 'production';
+    const realMockProv = new MockPaymentProvider();
+    const r = await realMockProv.verificarWebhooks({}, {});
+    expect(r.valido).toBe(false);
+    expect(r.evento).toBe('rejected');
+  });
+
+  it('rechaza crear un checkout de MOCK en producción', async () => {
+    process.env.NODE_ENV = 'production';
+    const realMockProv = new MockPaymentProvider();
+    await expect(realMockProv.crearSesionCheckout({} as any)).rejects.toThrow(/no está disponible en producción/);
+  });
+});
