@@ -13,8 +13,28 @@ async function bootstrap() {
     app.set('trust proxy', 1);
   }
 
+  const defaultOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3002',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3002',
+  ];
+  const configuredOrigins = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : [];
+  const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
+
   app.enableCors({
-    origin: (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:3002').split(','),
+    origin: (origin, callback) => {
+      // Permitir peticiones sin origin (como apps móviles, Postman o curl)
+      if (!origin) return callback(null, true);
+      // Permitir localhost o cualquier IP de red local (192.168.x.x, 10.x.x.x) o configurados
+      if (
+        allowedOrigins.includes(origin) ||
+        /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true); // En desarrollo permitir orígenes para evitar bloqueos de red
+    },
     credentials: true,
   });
 
@@ -36,8 +56,8 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT || 3001;
-  await app.listen(port);
-  console.log(`🚀 Backend corriendo en: http://localhost:${port}`);
+  await app.listen(port, '0.0.0.0');
+  console.log(`🚀 Backend corriendo en: http://0.0.0.0:${port}`);
   console.log(`📖 Documentación Swagger: http://localhost:${port}/api/docs`);
 }
 bootstrap();

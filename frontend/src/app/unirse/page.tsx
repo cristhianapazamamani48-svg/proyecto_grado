@@ -3,8 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { getApiUrl } from '@/lib/api-config';
 
 type Modo = 'examen' | 'institucion';
 
@@ -12,6 +11,7 @@ function UnirseContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tokenInvitacion = searchParams.get('token');
+  const API = getApiUrl();
 
   const [modo, setModo] = useState<Modo>(tokenInvitacion ? 'institucion' : 'examen');
 

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { getApiUrl } from '@/lib/api-config';
 
 export default function DocenteLoginPage() {
   const [esRegistro, setEsRegistro] = useState(false);
@@ -24,13 +24,21 @@ export default function DocenteLoginPage() {
     const body = esRegistro ? { nombre, email, password } : { email, password };
 
     try {
-      const res = await fetch(`${API}${endpoint}`, {
+      const apiUrl = getApiUrl();
+      const res = await fetch(`${apiUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
 
-      const data = await res.json();
+      let data: any = {};
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const textErr = await res.text();
+        throw new Error(`El servidor respondió con error (${res.status}): ${textErr.slice(0, 80)}`);
+      }
       if (!res.ok) throw new Error(data.message || 'Error de autenticación');
 
       localStorage.setItem('uub_docente_token', data.token);

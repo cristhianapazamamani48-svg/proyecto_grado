@@ -3,8 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { getApiUrl } from '@/lib/api-config';
 
 function getToken() {
   return typeof window !== 'undefined' ? localStorage.getItem('uub_docente_token') : null;
@@ -12,6 +11,7 @@ function getToken() {
 
 export default function DocenteOrganizacionPage() {
   const router = useRouter();
+  const API = getApiUrl();
   const [org, setOrg] = useState<any>(null);
   const [miembros, setMiembros] = useState<any[]>([]);
   const [invitaciones, setInvitaciones] = useState<any[]>([]);
