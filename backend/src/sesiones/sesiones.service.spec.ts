@@ -234,6 +234,22 @@ describe('SesionesService', () => {
       expect(res.respuesta.puntaje).toBe(8);
       expect(res.participante.puntajeTotal).toBe(18);
       expect(res.participante.porcentaje).toBe(90);
+      expect(prisma.respuesta.update).toHaveBeenCalledWith({
+        where: { idRespuesta: 88 },
+        data: expect.objectContaining({
+          puntaje: 8,
+          comentarioDocente: 'Buen desarrollo',
+          corregidoDocente: true,
+        }),
+      });
+      expect(prisma.auditoriaCalificacion.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          idRespuesta: 88,
+          idUsuario: 99,
+          puntajeNuevo: 8,
+          origen: 'DOCENTE_MANUAL',
+        }),
+      });
     });
 
     it('acepta sugerencia de IA y registra auditoría', async () => {

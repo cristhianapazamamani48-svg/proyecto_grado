@@ -6,12 +6,22 @@ import Link from 'next/link';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+type Modo = 'examen' | 'institucion';
+
 function UnirseContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tokenInvitacion = searchParams.get('token');
 
-  const [codigo, setCodigo] = useState('');
+  const [modo, setModo] = useState<Modo>(tokenInvitacion ? 'institucion' : 'examen');
+
+  // Ingreso a examen (participante sin cuenta)
+  const [codigoExamen, setCodigoExamen] = useState('');
+  const [nombreCompleto, setNombreCompleto] = useState('');
+
+  // Ingreso a institución (docente con cuenta)
+  const [codigoInstitucion, setCodigoInstitucion] = useState('');
+
   const [cargando, setCargando] = useState(false);
   const [mensaje, setMensaje] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
 
@@ -24,6 +34,53 @@ function UnirseContent() {
       handleAceptarToken(tokenInvitacion);
     }
   }, [tokenInvitacion]);
+
+  const cambiarModo = (nuevo: Modo) => {
+    if (nuevo === modo) return;
+    setModo(nuevo);
+    setMensaje(null);
+  };
+
+  const handleUnirseAExamen = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const codigo = codigoExamen.trim().toUpperCase();
+    const nombre = nombreCompleto.trim();
+    if (!codigo || !nombre) {
+      setMensaje({ tipo: 'error', texto: 'Ingresa el código de la sesión y tu nombre completo.' });
+      return;
+    }
+
+    setCargando(true);
+    setMensaje(null);
+    try {
+      const res = await fetch(`${API}/sesiones/unirse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codigo, nombreCompleto: nombre }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.token) {
+        setMensaje({
+          tipo: 'error',
+          texto: data?.message || 'No se pudo unir a la sesión. Verifica el código e inténtalo de nuevo.',
+        });
+        return;
+      }
+
+      // Credenciales del participante para rendir y para reanudar si pierde la conexión.
+      localStorage.setItem('uub_guest_token', data.token);
+      if (data.tokenAcceso) {
+        localStorage.setItem('uub_token_reanudacion', data.tokenAcceso);
+      }
+
+      router.push(`/examen/${codigo}`);
+    } catch (err) {
+      setMensaje({ tipo: 'error', texto: 'Error de conexión. Inténtalo de nuevo.' });
+    } finally {
+      setCargando(false);
+    }
+  };
 
   const handleAceptarToken = async (tok: string) => {
     const jwt = getToken();
@@ -57,7 +114,8 @@ function UnirseContent() {
 
   const handleUnirseConCodigo = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!codigo.trim()) return;
+    const codigo = codigoInstitucion.trim();
+    if (!codigo) return;
 
     const jwt = getToken();
     if (!jwt) {
@@ -76,7 +134,7 @@ function UnirseContent() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${jwt}`,
         },
-        body: JSON.stringify({ codigo: codigo.trim() }),
+        body: JSON.stringify({ codigo }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -96,7 +154,7 @@ function UnirseContent() {
     <div className="min-h-screen bg-indigo-50/40 flex items-center justify-center p-4 sm:p-6 font-sans">
       {/* Outer Card Container */}
       <div className="w-full max-w-4xl bg-white rounded-[32px] shadow-2xl shadow-indigo-500/10 border border-slate-100 overflow-hidden min-h-[520px] flex flex-col md:flex-row relative">
-        
+
         {/* Left Side: Form Area */}
         <div className="w-full md:w-7/12 p-8 sm:p-12 flex flex-col justify-center z-10">
           <div className="max-w-md w-full mx-auto space-y-6">
@@ -105,10 +163,46 @@ function UnirseContent() {
                 <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-md shadow-indigo-600/30">
                   U
                 </div>
-                <span className="text-xs font-bold uppercase tracking-widest text-indigo-600">Instituciones</span>
+                <span className="text-xs font-bold uppercase tracking-widest text-indigo-600">
+                  {modo === 'examen' ? 'Participantes' : 'Instituciones'}
+                </span>
               </div>
-              <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Unirse a Institución</h1>
-              <p className="text-xs text-slate-400 mt-1">Introduce el código de acceso institucional o procesa tu invitación</p>
+              <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">
+                {modo === 'examen' ? 'Rendir Examen' : 'Unirse a Institución'}
+              </h1>
+              <p className="text-xs text-slate-400 mt-1">
+                {modo === 'examen'
+                  ? 'Ingresa el código que te compartió tu docente'
+                  : 'Introduce el código de acceso institucional o procesa tu invitación'}
+              </p>
+            </div>
+
+            {/* Selector de modo */}
+            <div className="flex gap-1 rounded-2xl bg-slate-100/70 p-1">
+              <button
+                type="button"
+                onClick={() => cambiarModo('examen')}
+                aria-pressed={modo === 'examen'}
+                className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  modo === 'examen'
+                    ? 'bg-white text-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Rendir examen
+              </button>
+              <button
+                type="button"
+                onClick={() => cambiarModo('institucion')}
+                aria-pressed={modo === 'institucion'}
+                className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  modo === 'institucion'
+                    ? 'bg-white text-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Institución
+              </button>
             </div>
 
             {mensaje && (
@@ -123,7 +217,53 @@ function UnirseContent() {
               </div>
             )}
 
-            {tokenInvitacion ? (
+            {modo === 'examen' ? (
+              <form onSubmit={handleUnirseAExamen} className="space-y-4">
+                <div>
+                  <label htmlFor="codigo-sesion" className="block text-xs font-semibold text-slate-500 mb-1.5">
+                    Código de sesión
+                  </label>
+                  <input
+                    id="codigo-sesion"
+                    type="text"
+                    required
+                    autoComplete="off"
+                    placeholder="EJ. AB3C7D"
+                    value={codigoExamen}
+                    onChange={(e) => setCodigoExamen(e.target.value.toUpperCase())}
+                    className="w-full px-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm font-mono font-bold text-slate-800 tracking-[0.3em] placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all uppercase"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="nombre-completo" className="block text-xs font-semibold text-slate-500 mb-1.5">
+                    Nombre completo
+                  </label>
+                  <input
+                    id="nombre-completo"
+                    type="text"
+                    required
+                    autoComplete="name"
+                    placeholder="Nombres y apellidos"
+                    value={nombreCompleto}
+                    onChange={(e) => setNombreCompleto(e.target.value)}
+                    className="w-full px-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={cargando}
+                  className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-indigo-600/25 cursor-pointer mt-2"
+                >
+                  {cargando ? 'Ingresando...' : 'Comenzar Examen'}
+                </button>
+
+                <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+                  No necesitas crear una cuenta. Si pierdes la conexión podrás retomar tu examen desde donde lo dejaste.
+                </p>
+              </form>
+            ) : tokenInvitacion ? (
               <div className="space-y-4 py-2">
                 <p className="text-xs text-slate-600 font-medium">Procesando invitación enviada por token...</p>
                 {!getToken() && (
@@ -151,9 +291,10 @@ function UnirseContent() {
                   <input
                     type="text"
                     required
+                    aria-label="Código de institución"
                     placeholder="CÓDIGO DE INSTITUCIÓN (ej. ABC12345)"
-                    value={codigo}
-                    onChange={(e) => setCodigo(e.target.value.toUpperCase())}
+                    value={codigoInstitucion}
+                    onChange={(e) => setCodigoInstitucion(e.target.value.toUpperCase())}
                     className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm font-mono font-bold text-slate-800 tracking-wider placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all uppercase"
                   />
                 </div>
@@ -169,9 +310,15 @@ function UnirseContent() {
             )}
 
             <div className="pt-2 text-center">
-              <Link href="/docente/dashboard" className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
-                ← Volver al Dashboard
-              </Link>
+              {modo === 'examen' ? (
+                <Link href="/docente/login" className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                  ¿Eres docente? Inicia sesión aquí →
+                </Link>
+              ) : (
+                <Link href="/docente/dashboard" className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                  ← Volver al Dashboard
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -189,9 +336,13 @@ function UnirseContent() {
           </div>
 
           <div className="relative z-10 space-y-2 mt-auto">
-            <h3 className="text-2xl font-bold tracking-tight">Acceso Institucional</h3>
+            <h3 className="text-2xl font-bold tracking-tight">
+              {modo === 'examen' ? 'Evaluación en Línea' : 'Acceso Institucional'}
+            </h3>
             <p className="text-xs text-indigo-100 leading-relaxed max-w-xs">
-              Únete a la organización de tu universidad o colegio para colaborar y gestionar evaluaciones.
+              {modo === 'examen'
+                ? 'Ingresa el código de sesión y tu nombre para rendir la evaluación. Tus respuestas se guardan automáticamente.'
+                : 'Únete a la organización de tu universidad o colegio para colaborar y gestionar evaluaciones.'}
             </p>
           </div>
         </div>

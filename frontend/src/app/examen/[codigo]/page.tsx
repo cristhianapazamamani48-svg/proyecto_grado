@@ -61,6 +61,8 @@ export default function ExamenPlayerPage() {
 
   const [estadoSala, setEstadoSala] = useState<'PENDIENTE' | 'ACTIVA' | 'FINALIZADA'>('PENDIENTE');
   const [finalizado, setFinalizado] = useState(false);
+  const [yaEntregado, setYaEntregado] = useState(false);
+  const [sesionCerrada, setSesionCerrada] = useState(false);
   const [resultado, setResultado] = useState<any>(null);
   const [modoRevision, setModoRevision] = useState(false);
 
@@ -73,6 +75,7 @@ export default function ExamenPlayerPage() {
   // Estado de Guardado e Infracciones
   const [guardandoAvance, setGuardandoAvance] = useState(false);
   const [ultimoGuardado, setUltimoGuardado] = useState<Date | null>(null);
+  const [errorGuardado, setErrorGuardado] = useState<string | null>(null);
 
   const ultimoEventoRef = useRef<Record<string, number>>({});
   const timerTotalRef = useRef<NodeJS.Timeout | null>(null);
@@ -108,6 +111,16 @@ export default function ExamenPlayerPage() {
         if (!estadoRes.ok) throw new Error(estadoData.message || 'No fue posible consultar la sala.');
 
         setEstadoSala(estadoData.estadoSesion);
+        if (estadoData.estadoSesion === 'FINALIZADA') {
+          setSesionCerrada(true);
+          setCargando(false);
+          return;
+        }
+        if (estadoData.estadoParticipante === 'FINALIZADO') {
+          setYaEntregado(true);
+          setCargando(false);
+          return;
+        }
         if (estadoData.estadoSesion !== 'ACTIVA') {
           setCargando(false);
           return;
@@ -177,6 +190,8 @@ export default function ExamenPlayerPage() {
         const data = await res.json();
         if (data.estadoSesion === 'ACTIVA') {
           window.location.reload();
+        } else if (data.estadoSesion === 'FINALIZADA') {
+          setSesionCerrada(true);
         }
       } catch {
         /* silent */
@@ -380,9 +395,14 @@ export default function ExamenPlayerPage() {
       });
       if (res.ok) {
         setUltimoGuardado(new Date());
+        setErrorGuardado(null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setErrorGuardado(data?.message || 'No se pudo guardar tu respuesta.');
       }
     } catch (e) {
       console.error('Error al guardar avance:', e);
+      setErrorGuardado('Sin conexión: tu respuesta aún no se ha guardado.');
     } finally {
       setGuardandoAvance(false);
     }
@@ -538,6 +558,38 @@ export default function ExamenPlayerPage() {
     );
   }
 
+  // Vista: Sesión cerrada o examen ya entregado
+  if (sesionCerrada || yaEntregado) {
+    return (
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6 font-sans">
+        <div className="bg-white border border-slate-200 p-10 rounded-3xl max-w-md w-full text-center space-y-6 shadow-sm">
+          <div className="w-20 h-20 bg-slate-100 text-slate-500 rounded-3xl flex items-center justify-center mx-auto text-4xl shadow-sm">
+            {yaEntregado ? '✓' : '🔒'}
+          </div>
+          <div>
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded-full">
+              {yaEntregado ? 'Examen Entregado' : 'Sesión Finalizada'}
+            </span>
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight mt-3">
+              {yaEntregado ? 'Ya entregaste este examen' : 'La sesión ha finalizado'}
+            </h1>
+            <p className="text-slate-500 text-sm mt-2">
+              {yaEntregado
+                ? 'Tus respuestas ya fueron registradas. Contacta a tu docente si necesitas más información.'
+                : 'El docente cerró esta sesión de evaluación. Si crees que es un error, comunícate con tu docente.'}
+            </p>
+          </div>
+          <button
+            onClick={() => router.push('/unirse')}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-full transition-colors"
+          >
+            Volver a Ingresar
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   // Vista: Pantalla de Finalización
   if (finalizado && resultado) {
     return (
@@ -634,6 +686,11 @@ export default function ExamenPlayerPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans select-none">
+      {errorGuardado && (
+        <div className="bg-red-50 border-b border-red-200 text-red-700 text-xs font-semibold px-6 py-2 text-center">
+          ⚠ {errorGuardado} Revisa tu conexión; tus últimas respuestas podrían no estar guardadas.
+        </div>
+      )}
       {/* Header Bar */}
       <header className="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between sticky top-0 z-20 shadow-sm">
         <div className="flex items-center gap-4">
@@ -668,7 +725,11 @@ export default function ExamenPlayerPage() {
 
           {/* Estado de Guardado */}
           <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400">
-            {guardandoAvance ? (
+            {errorGuardado ? (
+              <span className="text-red-500 font-semibold" title={errorGuardado}>
+                ⚠ No guardado
+              </span>
+            ) : guardandoAvance ? (
               <>
                 <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
                 <span>Guardando...</span>

@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { randomBytes, randomInt } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CalificacionService } from '../calificacion/calificacion.service';
 import { JwtService } from '@nestjs/jwt';
@@ -11,6 +12,7 @@ import {
   EstadoEvaluacion,
   TipoEventoMonitoreo,
   EstadoRevisionIa,
+  ModoInicioSesion,
 } from '@prisma/client';
 
 export interface CrearSesionDto {
@@ -34,9 +36,31 @@ export class SesionesService {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
     for (let i = 0; i < 6; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
+      // randomInt usa un generador criptográficamente seguro (evita predecir códigos).
+      code += chars.charAt(randomInt(chars.length));
     }
     return code;
+  }
+
+  /**
+   * Determina desde cuándo corre el cronómetro de un participante.
+   * - Modo POR_PARTICIPANTE: desde que el propio alumno ingresa.
+   * - Modo INMEDIATO/PROGRAMADO: desde que la sesión fue iniciada; si el alumno
+   *   se unió antes (sala de espera), no se le descuenta ese tiempo.
+   * Antes se usaba siempre `fechaIngreso`, por lo que esperar en la sala
+   * consumía tiempo real del examen.
+   */
+  private calcularInicioCronometro(
+    fechaIngreso: Date | null,
+    sesion: { fechaInicio: Date | null; evaluacion: { modoInicio: ModoInicioSesion } },
+  ): Date | null {
+    const ingreso = fechaIngreso ? new Date(fechaIngreso) : null;
+    if (sesion.evaluacion.modoInicio === ModoInicioSesion.POR_PARTICIPANTE) {
+      return ingreso;
+    }
+    const inicioSesion = sesion.fechaInicio ? new Date(sesion.fechaInicio) : null;
+    if (inicioSesion && ingreso) return inicioSesion > ingreso ? inicioSesion : ingreso;
+    return inicioSesion ?? ingreso;
   }
 
   // Deterministic shuffle using a numeric seed (Linear Congruential Generator)
@@ -85,35 +109,35 @@ export class SesionesService {
   }
 
   async unirseASesion(codigo: string, nombreCompleto: string) {
+    if (!nombreCompleto || !nombreCompleto.trim()) {
+      throw new BadRequestException('El nombre completo es obligatorio para ingresar.');
+    }
+
     const sesion = await this.prisma.sesion.findUnique({
       where: { codigo: codigo.trim().toUpperCase() },
       include: { evaluacion: true },
     });
 
+    // Mensaje único para todos los motivos de rechazo: así no se puede
+    // averiguar por fuerza bruta qué códigos de sesión existen realmente.
     if (!sesion) {
-      throw new NotFoundException('La sesión de evaluación no existe.');
-    }
-
-    if (sesion.estado === EstadoSesion.FINALIZADA) {
-      throw new BadRequestException('Esta sesión ya ha finalizado. No se aceptan nuevos ingresos.');
+      throw new BadRequestException('No se pudo unir a la sesión. Verifica el código e inténtalo de nuevo.');
     }
 
     if (sesion.estado !== EstadoSesion.PENDIENTE && sesion.estado !== EstadoSesion.ACTIVA) {
-      throw new NotFoundException('La sesión de evaluación no está disponible.');
+      throw new BadRequestException('No se pudo unir a la sesión. Verifica el código e inténtalo de nuevo.');
     }
 
     // Validar ventana de fechas de la evaluación si está configurada
     const now = new Date();
-    if (sesion.evaluacion.fechaInicio && now < sesion.evaluacion.fechaInicio) {
-      throw new BadRequestException(
-        `La evaluación aún no ha comenzado. Fecha de inicio: ${sesion.evaluacion.fechaInicio.toLocaleString('es-BO')}`,
-      );
-    }
-    if (sesion.evaluacion.fechaFin && now > sesion.evaluacion.fechaFin) {
-      throw new BadRequestException('El plazo para realizar esta evaluación ha concluido.');
+    if (
+      (sesion.evaluacion.fechaInicio && now < sesion.evaluacion.fechaInicio) ||
+      (sesion.evaluacion.fechaFin && now > sesion.evaluacion.fechaFin)
+    ) {
+      throw new BadRequestException('No se pudo unir a la sesión. Verifica el código e inténtalo de nuevo.');
     }
 
-    const tokenAcceso = this.generarCodigoUnico() + Date.now().toString(36);
+    const tokenAcceso = randomBytes(16).toString('hex');
 
     const participante = await this.prisma.participante.create({
       data: {
@@ -196,12 +220,14 @@ export class SesionesService {
             idSesion: true,
             codigo: true,
             estado: true,
+            fechaInicio: true,
             evaluacion: {
               select: {
                 tiempoTotal: true,
                 tiempoPorPregunta: true,
                 fechaInicio: true,
                 fechaFin: true,
+                modoInicio: true,
               },
             },
           },
@@ -213,8 +239,12 @@ export class SesionesService {
 
     const evaluacion = participante.sesion.evaluacion;
     let tiempoRestanteTotal: number | null = null;
-    if (evaluacion.tiempoTotal && participante.fechaIngreso) {
-      const elapsedSec = Math.floor((Date.now() - new Date(participante.fechaIngreso).getTime()) / 1000);
+    const inicioCronometro = this.calcularInicioCronometro(participante.fechaIngreso, {
+      fechaInicio: participante.sesion.fechaInicio,
+      evaluacion: { modoInicio: evaluacion.modoInicio },
+    });
+    if (evaluacion.tiempoTotal && inicioCronometro) {
+      const elapsedSec = Math.floor((Date.now() - inicioCronometro.getTime()) / 1000);
       tiempoRestanteTotal = Math.max(0, evaluacion.tiempoTotal * 60 - elapsedSec);
     }
 
@@ -466,7 +496,7 @@ export class SesionesService {
           puntajeObtenido: respuesta && respuesta.puntaje !== null ? Number(respuesta.puntaje) : null,
           esCorrecta: respuesta ? respuesta.esCorrecta : null,
           respuestaTexto: respuesta ? respuesta.respuestaTexto : null,
-          comentarioDocente: respuesta ? respuesta.comentarioIa : null,
+          comentarioDocente: respuesta ? respuesta.comentarioDocente : null,
           corregidoDocente: respuesta ? respuesta.corregidoDocente : false,
           fechaCorreccion: respuesta ? respuesta.fechaCorreccion : null,
           correctorNombre: respuesta?.usuarioCorrector
@@ -617,8 +647,12 @@ export class SesionesService {
     const tiempoTotalSegundos = evaluacion.tiempoTotal ? evaluacion.tiempoTotal * 60 : null;
     let tiempoRestanteTotal: number | null = null;
 
-    if (tiempoTotalSegundos && participante.fechaIngreso) {
-      const elapsed = Math.floor((now - new Date(participante.fechaIngreso).getTime()) / 1000);
+    const inicioCronometro = this.calcularInicioCronometro(participante.fechaIngreso, {
+      fechaInicio: participante.sesion.fechaInicio,
+      evaluacion: { modoInicio: evaluacion.modoInicio },
+    });
+    if (tiempoTotalSegundos && inicioCronometro) {
+      const elapsed = Math.floor((now - inicioCronometro.getTime()) / 1000);
       tiempoRestanteTotal = Math.max(0, tiempoTotalSegundos - elapsed);
     }
 
@@ -711,8 +745,12 @@ export class SesionesService {
 
     // Validación estricta de tiempo límite en backend
     const now = Date.now();
-    if (evaluacion.tiempoTotal && participante.fechaIngreso) {
-      const maxAllowed = new Date(participante.fechaIngreso).getTime() + evaluacion.tiempoTotal * 60 * 1000 + 10000;
+    const inicioCronometro = this.calcularInicioCronometro(participante.fechaIngreso, {
+      fechaInicio: participante.sesion.fechaInicio,
+      evaluacion: { modoInicio: evaluacion.modoInicio },
+    });
+    if (evaluacion.tiempoTotal && inicioCronometro) {
+      const maxAllowed = inicioCronometro.getTime() + evaluacion.tiempoTotal * 60 * 1000 + 10000;
       if (now > maxAllowed) {
         throw new BadRequestException('El tiempo límite del examen ha expirado.');
       }
@@ -961,17 +999,35 @@ export class SesionesService {
 
     const puntajeMax = Number(respuesta.pregunta.puntaje);
     const puntajeAsignado = Math.max(0, Math.min(puntajeMax, Number(body.puntaje)));
+    const comentarioDocente = body.comentario?.trim() || null;
 
     const actualizada = await this.prisma.$transaction(async (tx) => {
       const respActualizada = await tx.respuesta.update({
         where: { idRespuesta },
         data: {
           puntaje: puntajeAsignado,
-          comentarioIa: body.comentario?.trim() || null,
+          // Se guarda en su propia columna para no pisar la retroalimentación
+          // sugerida por la IA (que vive en comentarioIa).
+          comentarioDocente,
           corregidoDocente: true,
           idUsuarioCorrector: idUsuarioDocente,
           fechaCorreccion: new Date(),
           esCorrecta: puntajeAsignado > 0,
+        },
+      });
+
+      // Trazabilidad de la corrección manual (antes no se registraba auditoría).
+      await tx.auditoriaCalificacion.create({
+        data: {
+          idRespuesta,
+          idUsuario: idUsuarioDocente,
+          puntajeAnterior: respuesta.puntaje,
+          puntajeNuevo: puntajeAsignado,
+          comentarioAnterior: respuesta.comentarioDocente,
+          comentarioNuevo: comentarioDocente,
+          estadoRevisionAnterior: respuesta.estadoRevisionIa,
+          estadoRevisionNuevo: respuesta.estadoRevisionIa,
+          origen: 'DOCENTE_MANUAL',
         },
       });
 

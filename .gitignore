@@ -15,6 +15,7 @@ out/
 .env.local
 .env.production
 **/.env*
+!**/.env.example
 
 # Logs
 *.log

@@ -1,10 +1,17 @@
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Detrás de un reverse proxy, habilita TRUST_PROXY=true para que el rate
+  // limiting y los logs usen la IP real del cliente (X-Forwarded-For).
+  if (process.env.TRUST_PROXY === 'true') {
+    app.set('trust proxy', 1);
+  }
 
   app.enableCors({
     origin: (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:3002').split(','),

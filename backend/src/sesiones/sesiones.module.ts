@@ -6,6 +6,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { AiModule } from '../ai/ai.module';
+import { obtenerJwtSecret } from '../common/config/secretos';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { AiModule } from '../ai/ai.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'super-secreto-uub-evaluaciones-jwt-key-2026',
+        secret: obtenerJwtSecret(configService),
         signOptions: { expiresIn: '1d' },
       }),
     }),

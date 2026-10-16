@@ -5,6 +5,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
+import { obtenerJwtSecret } from '../common/config/secretos';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { JwtStrategy } from './jwt.strategy';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'super-secreto-uub-evaluaciones-jwt-key-2026',
+        secret: obtenerJwtSecret(configService),
         signOptions: { expiresIn: '7d' },
       }),
     }),

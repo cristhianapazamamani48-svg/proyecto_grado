@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerHttpGuard } from './common/guards/throttler-http.guard';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { EvaluacionesModule } from './evaluaciones/evaluaciones.module';
@@ -13,6 +16,10 @@ import { PagosModule } from './pagos/pagos.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Límite global de respaldo (300 req/min por IP). Las rutas sensibles
+    // (auth, unirse a sesión, reanudar, códigos institucionales) aplican
+    // límites más estrictos con @Throttle.
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 300 }]),
     PrismaModule,
     AuthModule,
     EvaluacionesModule,
@@ -23,5 +30,6 @@ import { PagosModule } from './pagos/pagos.module';
     SuperadminModule,
     PagosModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerHttpGuard }],
 })
 export class AppModule {}

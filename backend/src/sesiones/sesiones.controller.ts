@@ -1,7 +1,8 @@
 import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException, Patch, Param } from '@nestjs/common';
-import { SesionesService } from './sesiones.service';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
 import { TipoEventoMonitoreo } from '@prisma/client';
+import { SesionesService } from './sesiones.service';
 
 @Controller('sesiones')
 export class SesionesController {
@@ -14,11 +15,15 @@ export class SesionesController {
     return this.sesionesService.crearSesion(req.user.sub, body.idEvaluacion);
   }
 
+  // Público: límite holgado para que un aula completa (misma IP tras NAT)
+  // pueda ingresar, pero suficiente para frenar la enumeración de códigos.
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
   @Post('unirse')
   async unirse(@Body() body: { codigo: string; nombreCompleto: string }) {
     return this.sesionesService.unirseASesion(body.codigo, body.nombreCompleto);
   }
 
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
   @Post('reanudar')
   async reanudar(@Body() body: { tokenAcceso: string }) {
     return this.sesionesService.reanudarSesion(body.tokenAcceso);

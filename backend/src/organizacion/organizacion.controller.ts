@@ -13,6 +13,7 @@ import {
   ParseIntPipe,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
 import { OrganizacionService } from './organizacion.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RolUsuario } from '@prisma/client';
@@ -34,6 +35,19 @@ export class OrganizacionController {
       throw new NotFoundException('El usuario no pertenece a ninguna organización activa.');
     }
     return usuario.idOrganizacionActual;
+  }
+
+  /**
+   * Solo cuentas de usuario (docente/superadmin) pueden operar sobre
+   * organizaciones. Impide que tokens de participante guest o de estudiante,
+   * cuyos IDs autoincrementales colisionan con idUsuario, afecten membresías
+   * o invitaciones ajenas.
+   */
+  private requiereUsuario(req: any): number {
+    if (req.user?.tipo !== 'USUARIO') {
+      throw new ForbiddenException('Esta acción requiere una cuenta de usuario.');
+    }
+    return this.requiereUsuario(req);
   }
 
   private async verificarEsAdmin(idUsuario: number, idOrganizacion: number) {
@@ -62,27 +76,27 @@ export class OrganizacionController {
 
   @Get('mi-organizacion')
   async obtenerMiOrganizacion(@Request() req: any) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
     return this.organizacionService.obtenerOrganizacion(idOrg);
   }
 
   @Get('mi-organizacion/miembros')
   async listarMiembros(@Request() req: any) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
     return this.organizacionService.listarMiembros(idOrg);
   }
 
   @Patch('mi-organizacion/miembros/:id/aprobar')
   async aprobarMembresia(@Param('id', ParseIntPipe) idMembresia: number, @Request() req: any) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
-    await this.verificarEsAdmin(Number(req.user.sub), idOrg);
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
+    await this.verificarEsAdmin(this.requiereUsuario(req), idOrg);
     return this.organizacionService.aprobarMembresia(idOrg, idMembresia);
   }
 
   @Patch('mi-organizacion/miembros/:id/rechazar')
   async rechazarMembresia(@Param('id', ParseIntPipe) idMembresia: number, @Request() req: any) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
-    await this.verificarEsAdmin(Number(req.user.sub), idOrg);
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
+    await this.verificarEsAdmin(this.requiereUsuario(req), idOrg);
     return this.organizacionService.rechazarMembresia(idOrg, idMembresia);
   }
 
@@ -91,11 +105,11 @@ export class OrganizacionController {
     @Request() req: any,
     @Body() body: { correo: string; rol?: RolUsuario },
   ) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
-    await this.verificarEsAdmin(Number(req.user.sub), idOrg);
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
+    await this.verificarEsAdmin(this.requiereUsuario(req), idOrg);
     return this.organizacionService.crearInvitacion(
       idOrg,
-      Number(req.user.sub),
+      this.requiereUsuario(req),
       body.correo,
       body.rol,
     );
@@ -103,27 +117,28 @@ export class OrganizacionController {
 
   @Get('mi-organizacion/invitaciones')
   async listarInvitaciones(@Request() req: any) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
-    await this.verificarEsAdmin(Number(req.user.sub), idOrg);
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
+    await this.verificarEsAdmin(this.requiereUsuario(req), idOrg);
     return this.organizacionService.listarInvitaciones(idOrg);
   }
 
   @Delete('mi-organizacion/invitaciones/:id')
   async revocarInvitacion(@Param('id', ParseIntPipe) idInvitacion: number, @Request() req: any) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
-    await this.verificarEsAdmin(Number(req.user.sub), idOrg);
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
+    await this.verificarEsAdmin(this.requiereUsuario(req), idOrg);
     return this.organizacionService.revocarInvitacion(idOrg, idInvitacion);
   }
 
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   @Post('aceptar-invitacion/:token')
   async aceptarInvitacion(@Param('token') token: string, @Request() req: any) {
-    return this.organizacionService.aceptarInvitacion(token, Number(req.user.sub));
+    return this.organizacionService.aceptarInvitacion(token, this.requiereUsuario(req));
   }
 
   @Post('mi-organizacion/codigo-acceso')
   async generarCodigoAcceso(@Request() req: any) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
-    await this.verificarEsAdmin(Number(req.user.sub), idOrg);
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
+    await this.verificarEsAdmin(this.requiereUsuario(req), idOrg);
     return this.organizacionService.generarCodigoAcceso(idOrg);
   }
 
@@ -137,19 +152,20 @@ export class OrganizacionController {
       aprobacionRequerida?: boolean;
     },
   ) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
-    await this.verificarEsAdmin(Number(req.user.sub), idOrg);
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
+    await this.verificarEsAdmin(this.requiereUsuario(req), idOrg);
     return this.organizacionService.configurarCodigoAcceso(idOrg, body);
   }
 
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   @Post('unirse-codigo')
   async unirseConCodigo(@Request() req: any, @Body() body: { codigo: string }) {
-    return this.organizacionService.unirseConCodigo(body.codigo, Number(req.user.sub));
+    return this.organizacionService.unirseConCodigo(body.codigo, this.requiereUsuario(req));
   }
 
   @Get('mi-organizacion/uso-ia')
   async obtenerUsoIa(@Request() req: any) {
-    const idOrg = await this.obtenerIdOrganizacionUsuario(Number(req.user.sub));
+    const idOrg = await this.obtenerIdOrganizacionUsuario(this.requiereUsuario(req));
     return this.organizacionService.obtenerUsosIa(idOrg);
   }
 }

@@ -360,6 +360,7 @@ model Respuesta {
   estadoRevisionIa   EstadoRevisionIa  @default(PENDIENTE) @map("estado_revision_ia")
   versionPrompt      String?           @map("version_prompt") @db.VarChar(20)
   corregidoDocente   Boolean           @default(false) @map("corregido_docente")
+  comentarioDocente  String?           @map("comentario_docente") @db.Text
   idUsuarioCorrector Int?              @map("id_usuario_corrector")
   fechaCorreccion    DateTime?         @map("fecha_correccion")
 

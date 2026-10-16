@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { PrismaClient, TipoPlan, RolUsuario } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { obtenerPasswordSuperAdmin } from '../common/config/secretos';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -105,28 +106,32 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async asegurarSuperAdmin() {
+    const superadminExistente = await this.usuario.findFirst({
+      where: { rol: RolUsuario.SUPER_ADMIN },
+    });
+
+    if (superadminExistente) return;
+
+    // Resuelve la contraseña ANTES de crear la cuenta; lanza error si falta en
+    // producción o si contiene el valor genérico público (fail-fast, no se
+    // traga dentro del catch de más abajo).
+    const correo = (process.env.SUPERADMIN_EMAIL || 'superadmin@uub.edu.pe').toLowerCase();
+    const rawPassword = obtenerPasswordSuperAdmin(this.logger);
+
     try {
-      const superadminExistente = await this.usuario.findFirst({
-        where: { rol: RolUsuario.SUPER_ADMIN },
+      const passwordHash = await bcrypt.hash(rawPassword, 10);
+
+      const superAdmin = await this.usuario.create({
+        data: {
+          nombre: 'Super',
+          apellido: 'Administrador',
+          correo,
+          password: passwordHash,
+          rol: RolUsuario.SUPER_ADMIN,
+        },
       });
 
-      if (!superadminExistente) {
-        const correo = process.env.SUPERADMIN_EMAIL || 'superadmin@uub.edu.pe';
-        const rawPassword = process.env.SUPERADMIN_PASSWORD || 'SuperAdminSecret2026!';
-        const passwordHash = await bcrypt.hash(rawPassword, 10);
-
-        const superAdmin = await this.usuario.create({
-          data: {
-            nombre: 'Super',
-            apellido: 'Administrador',
-            correo: correo.toLowerCase(),
-            password: passwordHash,
-            rol: RolUsuario.SUPER_ADMIN,
-          },
-        });
-
-        this.logger.log(`Superusuario inicial creado exitosamente (${superAdmin.correo}).`);
-      }
+      this.logger.log(`Superusuario inicial creado exitosamente (${superAdmin.correo}).`);
     } catch (err) {
       this.logger.error('Error al asegurar Superusuario inicial:', err);
     }

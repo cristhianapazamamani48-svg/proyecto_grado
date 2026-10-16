@@ -90,6 +90,7 @@ export default function SesionControlPage() {
     const socket = io(socketUrl, {
       path: API.includes('/api') ? '/socket.io' : undefined,
       transports: ['websocket', 'polling'],
+      auth: { token: getToken() },
     });
 
     socketRef.current = socket;
