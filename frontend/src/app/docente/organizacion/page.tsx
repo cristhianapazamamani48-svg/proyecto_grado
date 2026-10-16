@@ -258,7 +258,7 @@ export default function DocenteOrganizacionPage() {
     }
   };
 
-  const handleCrearCheckout = async (proveedor: 'MOCK_SANDBOX' | 'MERCADOPAGO' | 'PAYPAL') => {
+  const handleCrearCheckout = async (proveedor: 'MOCK_SANDBOX' | 'MERCADOPAGO' | 'PAYPAL' | 'LIVEES') => {
     const token = getToken();
     setCargandoCheckout(true);
     setCheckoutUrl(null);
@@ -285,12 +285,15 @@ export default function DocenteOrganizacionPage() {
         }
         if (data.urlCheckout) {
           setCheckoutUrl(data.urlCheckout);
-          mostrarMensaje('ok', 'Sesión de pago creada. Redirige al proveedor de pago.');
+          mostrarMensaje('ok', 'Sesión de pago creada. Redirigiendo a la pasarela...');
+          if (proveedor === 'LIVEES' || proveedor === 'MERCADOPAGO') {
+            window.open(data.urlCheckout, '_blank');
+          }
         } else if (data.estado === 'APROBADO') {
-          mostrarMensaje('ok', '¡Pago de prueba aprobado! Tu plan ha sido actualizado.');
+          mostrarMensaje('ok', '¡Pago aprobado! Tu plan ha sido actualizado a Maestro Pro.');
           cargarDatos();
         } else {
-          mostrarMensaje('ok', `Sesión creada (${data.estado}). ID: ${data.idTransaccion || ''}`);
+          mostrarMensaje('ok', `Sesión creada (${data.estado || 'PENDIENTE'}). ID: ${data.idTransaccion || ''}`);
           cargarDatos();
         }
       } else {
@@ -592,26 +595,42 @@ export default function DocenteOrganizacionPage() {
 
                 <div className="flex flex-wrap gap-3 pt-2">
                   <button
-                    onClick={() => handleCrearCheckout('MOCK_SANDBOX')}
+                    onClick={() => handleCrearCheckout('LIVEES')}
                     disabled={cargandoCheckout}
-                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow transition"
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center gap-2 cursor-pointer"
                   >
-                    {cargandoCheckout ? 'Procesando...' : '🧪 Pago de Prueba (Sandbox)'}
+                    <span>🇧🇴</span>
+                    <span>{cargandoCheckout ? 'Iniciando...' : 'Pagar en Bolivia (QR Simple / Yape / Tarjetas)'}</span>
                   </button>
                   <button
                     onClick={() => handleCrearCheckout('MERCADOPAGO')}
                     disabled={cargandoCheckout}
-                    className="px-5 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow transition"
+                    className="px-5 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow transition cursor-pointer"
                   >
-                    💳 Pagar con Mercado Pago
+                    💳 Mercado Pago
                   </button>
                   <button
                     onClick={() => handleCrearCheckout('PAYPAL')}
                     disabled={cargandoCheckout}
-                    className="px-5 py-2.5 bg-yellow-400 hover:bg-yellow-500 disabled:opacity-50 text-slate-900 font-semibold text-sm rounded-xl shadow transition"
+                    className="px-5 py-2.5 bg-yellow-400 hover:bg-yellow-500 disabled:opacity-50 text-slate-900 font-semibold text-sm rounded-xl shadow transition cursor-pointer"
                   >
-                    🅿 Pagar con PayPal
+                    🅿 PayPal (USD)
                   </button>
+                  <button
+                    onClick={() => handleCrearCheckout('MOCK_SANDBOX')}
+                    disabled={cargandoCheckout}
+                    className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 text-slate-700 font-medium text-xs rounded-xl transition cursor-pointer"
+                  >
+                    🧪 Sandbox Demo
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 bg-white/70 p-3 rounded-xl border border-indigo-100">
+                  <strong className="text-slate-700">Medios admitidos en Bolivia:</strong>
+                  <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded font-medium">QR Simple</span>
+                  <span className="bg-purple-50 text-purple-800 px-2 py-0.5 rounded font-medium">Yape (BCP)</span>
+                  <span className="bg-blue-50 text-blue-800 px-2 py-0.5 rounded font-medium">Yolo Pago (Ganadero)</span>
+                  <span className="bg-amber-50 text-amber-800 px-2 py-0.5 rounded font-medium">Altoke (BancoSol)</span>
+                  <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-medium">Tarjetas de Débito/Crédito Visa/Mastercard</span>
                 </div>
 
                 {pagoSandboxPendiente && (

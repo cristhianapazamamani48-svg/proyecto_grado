@@ -111,6 +111,7 @@ export class PagosController {
     let proveedor: ProveedorPago;
     if (provUpper === 'MERCADOPAGO') proveedor = ProveedorPago.MERCADOPAGO;
     else if (provUpper === 'PAYPAL') proveedor = ProveedorPago.PAYPAL;
+    else if (provUpper === 'LIVEES') proveedor = ProveedorPago.LIVEES;
     else proveedor = ProveedorPago.MOCK_SANDBOX;
 
     return this.pagosService.procesarWebhook(proveedor, body, headers);

@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MockPaymentProvider } from './providers/mock-payment.provider';
 import { MercadoPagoProvider } from './providers/mercadopago.provider';
 import { PayPalProvider } from './providers/paypal.provider';
+import { LiveesProvider } from './providers/livees.provider';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers compartidos
@@ -76,6 +77,15 @@ async function buildModule() {
           nombreProveedor: ProveedorPago.PAYPAL,
           verificarWebhooks: jest.fn(),
           consultarSuscripcion: jest.fn(),
+          cancelarSuscripcion: jest.fn(),
+        },
+      },
+      {
+        provide: LiveesProvider,
+        useValue: {
+          nombreProveedor: ProveedorPago.LIVEES,
+          crearSesionCheckout: jest.fn(),
+          verificarWebhooks: jest.fn(),
           cancelarSuscripcion: jest.fn(),
         },
       },
@@ -1135,5 +1145,109 @@ describe('PagosService — aprobarPagoSandbox', () => {
     process.env.NODE_ENV = 'production';
     const realMockProv = new MockPaymentProvider();
     await expect(realMockProv.crearSesionCheckout({} as any)).rejects.toThrow(/no está disponible en producción/);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Suite: LiveesProvider (Bolivia)
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('LiveesProvider — Pagos Bolivia', () => {
+  let livees: LiveesProvider;
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    jest.resetModules();
+    process.env = { ...originalEnv };
+    livees = new LiveesProvider();
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  it('crearSesionCheckout en desarrollo sin credenciales genera sesión simulada de demostración', async () => {
+    process.env.NODE_ENV = 'development';
+    delete process.env.LIVEES_MERCHANT_TOKEN;
+    delete process.env.LIVEES_RESOURCE_KEY;
+
+    const res = await livees.crearSesionCheckout({
+      idOrganizacion: 12,
+      idUsuario: 3,
+      plan: 'MAESTRO_PRO' as any,
+      montoUsd: 7.25,
+      montoLocal: 50,
+      correoUsuario: 'docente@uub.edu.bo',
+      nombreUsuario: 'Docente Bolivia',
+      urlRetornoSuccess: 'http://localhost:3002/success',
+      urlRetornoCancel: 'http://localhost:3002/cancel',
+    });
+
+    expect(res.proveedor).toBe(ProveedorPago.LIVEES);
+    expect(res.idTransaccionExterna).toMatch(/^livees_12_/);
+    expect(res.metodoPago).toBe('LIVEES_QR_BOLIVIA');
+    expect(res.urlCheckout).toContain('livees_ref=');
+  });
+
+  it('crearSesionCheckout en producción exige LIVEES_MERCHANT_TOKEN y LIVEES_RESOURCE_KEY', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.LIVEES_MERCHANT_TOKEN;
+
+    await expect(
+      livees.crearSesionCheckout({
+        idOrganizacion: 12,
+        idUsuario: 3,
+        plan: 'MAESTRO_PRO' as any,
+        montoUsd: 7.25,
+        montoLocal: 50,
+        correoUsuario: 'docente@uub.edu.bo',
+        nombreUsuario: 'Docente Bolivia',
+        urlRetornoSuccess: 'http://localhost:3002/success',
+        urlRetornoCancel: 'http://localhost:3002/cancel',
+      })
+    ).rejects.toThrow(/Livees Checkout no está configurado/);
+  });
+
+  it('verificarWebhooks rechaza si LIVEES_WEBHOOK_SECRET no está configurado', async () => {
+    delete process.env.LIVEES_WEBHOOK_SECRET;
+    const r = await livees.verificarWebhooks({}, {});
+    expect(r.valido).toBe(false);
+    expect(r.evento).toBe('config_error');
+  });
+
+  it('verificarWebhooks aprueba evento qr.paid o payment.completed', async () => {
+    process.env.LIVEES_WEBHOOK_SECRET = 'secreto_livees_super_seguro_2026';
+    const body = {
+      event: 'qr.paid',
+      status: 'PAID',
+      transaction_id: 'livees_tx_9988',
+      amount: 50,
+      currency: 'BOB',
+      external_reference: 'livees_ref_local',
+    };
+
+    const r = await livees.verificarWebhooks(body, {});
+    expect(r.valido).toBe(true);
+    expect(r.estadoPago).toBe('APROBADO');
+    expect(r.monto).toBe(50);
+    expect(r.moneda).toBe('BOB');
+    expect(r.idTransaccionExterna).toBe('livees_tx_9988');
+  });
+
+  it('verificarWebhooks rechaza evento payment.failed', async () => {
+    process.env.LIVEES_WEBHOOK_SECRET = 'secreto_livees_super_seguro_2026';
+    const body = {
+      event: 'payment.failed',
+      status: 'FAILED',
+      transaction_id: 'livees_tx_fail_1',
+      amount: 50,
+      currency: 'BOB',
+      error_message: 'Fondos insuficientes en cuenta bancaria',
+    };
+
+    const r = await livees.verificarWebhooks(body, {});
+    expect(r.valido).toBe(true);
+    expect(r.estadoPago).toBe('RECHAZADO');
+    expect(r.motivoFallo).toBe('Fondos insuficientes en cuenta bancaria');
   });
 });

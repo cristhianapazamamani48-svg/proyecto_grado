@@ -33,6 +33,7 @@ enum ProveedorPago {
   MOCK_SANDBOX
   MERCADOPAGO
   PAYPAL
+  LIVEES
 }
 
 enum EstadoPagoTransaccion {

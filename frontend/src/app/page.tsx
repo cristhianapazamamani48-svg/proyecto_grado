@@ -78,9 +78,25 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <footer className="flex-shrink-0 px-8 py-3 border-t border-slate-100 flex items-center justify-between">
-        <span className="text-xs text-slate-400">© {new Date().getFullYear()} Proyecto UUB — Evaluaciones Académicas</span>
-        <span className="text-xs text-slate-300">Next.js · NestJS · PostgreSQL</span>
+      <footer className="flex-shrink-0 px-6 sm:px-8 py-3.5 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-slate-500">
+        <span>© {new Date().getFullYear()} Proyecto UUB — Evaluaciones Académicas</span>
+        <div className="flex items-center gap-4 text-[11px] text-slate-400">
+          <Link href="/legal/aviso-legal" className="hover:text-slate-700 transition-colors">
+            Aviso Legal
+          </Link>
+          <span>·</span>
+          <Link href="/legal/privacidad" className="hover:text-slate-700 transition-colors">
+            Privacidad
+          </Link>
+          <span>·</span>
+          <Link href="/legal/cookies" className="hover:text-slate-700 transition-colors">
+            Cookies
+          </Link>
+          <span>·</span>
+          <Link href="/legal/terminos" className="hover:text-slate-700 transition-colors">
+            Términos
+          </Link>
+        </div>
       </footer>
     </main>
   );

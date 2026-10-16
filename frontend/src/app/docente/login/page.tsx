@@ -110,10 +110,23 @@ export default function DocenteLoginPage() {
                   </button>
                 </form>
 
-                <div className="pt-2 text-center">
+                <div className="pt-2 flex flex-col items-center gap-2">
                   <Link href="/" className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
                     ← Volver al inicio
                   </Link>
+                  <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                    <Link href="/legal/aviso-legal" className="hover:text-slate-600 transition-colors">
+                      Aviso Legal
+                    </Link>
+                    <span>·</span>
+                    <Link href="/legal/privacidad" className="hover:text-slate-600 transition-colors">
+                      Privacidad
+                    </Link>
+                    <span>·</span>
+                    <Link href="/legal/terminos" className="hover:text-slate-600 transition-colors">
+                      Términos
+                    </Link>
+                  </div>
                 </div>
               </div>
             </div>
@@ -237,6 +250,17 @@ export default function DocenteLoginPage() {
                   >
                     {cargando ? 'Procesando...' : 'Sign up'}
                   </button>
+
+                  <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+                    Al registrarte, confirmas que aceptas nuestros{' '}
+                    <Link href="/legal/terminos" target="_blank" className="text-indigo-600 hover:underline">
+                      Términos de Servicio
+                    </Link>{' '}
+                    y{' '}
+                    <Link href="/legal/privacidad" target="_blank" className="text-indigo-600 hover:underline">
+                      Política de Privacidad
+                    </Link>.
+                  </p>
                 </form>
 
                 <div className="pt-2 text-center">

@@ -5,6 +5,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { MockPaymentProvider } from './providers/mock-payment.provider';
 import { MercadoPagoProvider } from './providers/mercadopago.provider';
 import { PayPalProvider } from './providers/paypal.provider';
+import { LiveesProvider } from './providers/livees.provider';
 
 @Module({
   imports: [PrismaModule],
@@ -13,8 +14,9 @@ import { PayPalProvider } from './providers/paypal.provider';
     MockPaymentProvider,
     MercadoPagoProvider,
     PayPalProvider,
+    LiveesProvider,
   ],
   controllers: [PagosController],
-  exports: [PagosService],
+  exports: [PagosService, LiveesProvider],
 })
 export class PagosModule {}

@@ -145,16 +145,29 @@ export default function DocenteLayout({ children }: { children: React.ReactNode 
           </nav>
         </div>
 
-        {/* Footer Logout */}
-        <div className="p-6 border-t border-slate-100">
+        {/* Footer Logout & Legal */}
+        <div className="p-6 border-t border-slate-100 space-y-3">
           <button
             type="button"
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 text-red-600 hover:bg-red-50 font-bold text-xs rounded-2xl transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-3 text-red-600 hover:bg-red-50 font-bold text-xs rounded-2xl transition-colors cursor-pointer"
           >
             <span className="text-base">🚪</span>
             <span>Cerrar sesión</span>
           </button>
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[10px] text-slate-400 text-center">
+            <Link href="/legal/privacidad" className="hover:text-slate-600 transition-colors">
+              Privacidad
+            </Link>
+            <span>·</span>
+            <Link href="/legal/terminos" className="hover:text-slate-600 transition-colors">
+              Términos
+            </Link>
+            <span>·</span>
+            <Link href="/legal/cookies" className="hover:text-slate-600 transition-colors">
+              Cookies
+            </Link>
+          </div>
         </div>
       </aside>
 

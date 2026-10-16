@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MockPaymentProvider } from './providers/mock-payment.provider';
 import { MercadoPagoProvider } from './providers/mercadopago.provider';
 import { PayPalProvider } from './providers/paypal.provider';
+import { LiveesProvider } from './providers/livees.provider';
 import { PaymentProvider, CheckoutParams } from './interfaces/payment-provider.interface';
 import {
   ProveedorPago,
@@ -34,10 +35,12 @@ export class PagosService {
     private readonly mockProvider: MockPaymentProvider,
     private readonly mpProvider: MercadoPagoProvider,
     private readonly paypalProvider: PayPalProvider,
+    private readonly liveesProvider: LiveesProvider,
   ) {
     this.providers.set(ProveedorPago.MOCK_SANDBOX, this.mockProvider);
     this.providers.set(ProveedorPago.MERCADOPAGO, this.mpProvider);
     this.providers.set(ProveedorPago.PAYPAL, this.paypalProvider);
+    this.providers.set(ProveedorPago.LIVEES, this.liveesProvider);
   }
 
   private getProvider(nombre?: ProveedorPago): PaymentProvider {

@@ -319,6 +319,19 @@ function UnirseContent() {
                   ← Volver al Dashboard
                 </Link>
               )}
+              <div className="flex items-center justify-center gap-2 pt-1 text-[10px] text-slate-400">
+                <Link href="/legal/privacidad" className="hover:text-slate-600 transition-colors">
+                  Privacidad
+                </Link>
+                <span>·</span>
+                <Link href="/legal/cookies" className="hover:text-slate-600 transition-colors">
+                  Cookies
+                </Link>
+                <span>·</span>
+                <Link href="/legal/terminos" className="hover:text-slate-600 transition-colors">
+                  Términos
+                </Link>
+              </div>
             </div>
           </div>
         </div>
