@@ -19,6 +19,11 @@ export class AuthController {
     return this.authService.loginDocente(body.email, body.password);
   }
 
+  @Post('google')
+  async loginGoogle(@Body() body: { idToken: string }) {
+    return this.authService.loginConGoogle(body.idToken);
+  }
+
   @Post('estudiante/registro')
   async registrarEstudiante(@Body() body: { nombre: string; apellido: string; email: string; password: string }) {
     return this.authService.registrarEstudiante(body.nombre, body.apellido, body.email, body.password);
