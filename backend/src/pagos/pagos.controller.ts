@@ -106,6 +106,7 @@ export class PagosController {
     @Param('proveedor') proveedorStr: string,
     @Body() body: any,
     @Headers() headers: any,
+    @Request() req: any,
   ) {
     const provUpper = proveedorStr.toUpperCase();
     let proveedor: ProveedorPago;
@@ -114,7 +115,7 @@ export class PagosController {
     else if (provUpper === 'LIVEES') proveedor = ProveedorPago.LIVEES;
     else proveedor = ProveedorPago.MOCK_SANDBOX;
 
-    return this.pagosService.procesarWebhook(proveedor, body, headers);
+    return this.pagosService.procesarWebhook(proveedor, body, headers, req?.rawBody);
   }
 
   @Get('mi-suscripcion')

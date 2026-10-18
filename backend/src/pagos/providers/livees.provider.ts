@@ -114,7 +114,7 @@ export class LiveesProvider implements PaymentProvider {
     }
   }
 
-  async verificarWebhooks(body: any, headers: any): Promise<WebhookVerificationResult> {
+  async verificarWebhooks(body: any, headers: any, rawBody?: Buffer | string): Promise<WebhookVerificationResult> {
     const webhookSecret = process.env.LIVEES_WEBHOOK_SECRET;
 
     if (!webhookSecret) {
@@ -122,28 +122,40 @@ export class LiveesProvider implements PaymentProvider {
       return { valido: false, evento: 'config_error' };
     }
 
-    // Validación de firma HMAC si viene en cabeceras
+    // Validación de firma HMAC: OBLIGATORIA (evita bypass de firma omitiendo la cabecera)
     const firmaRecibida = headers['x-livees-signature'] || headers['x-signature'] || body?.signature;
 
-    if (firmaRecibida) {
-      try {
-        const payloadStr = typeof body === 'string' ? body : JSON.stringify(body);
-        const hmacEsperado = crypto
-          .createHmac('sha256', webhookSecret)
-          .update(payloadStr)
-          .digest('hex');
+    if (!firmaRecibida) {
+      this.logger.warn('[Livees Checkout] Webhook recibido sin firma requerida. Rechazado.');
+      return { valido: false, evento: 'missing_signature' };
+    }
 
-        const bufEsperado = Buffer.from(hmacEsperado);
-        const bufRecibido = Buffer.from(firmaRecibida);
+    try {
+      // Priorizar el rawBody (Buffer/string original sin re-parsear)
+      let payloadParaFirma: Buffer | string;
+      if (rawBody) {
+        payloadParaFirma = rawBody;
+      } else if (typeof body === 'string') {
+        payloadParaFirma = body;
+      } else {
+        payloadParaFirma = JSON.stringify(body);
+      }
 
-        if (bufEsperado.length !== bufRecibido.length || !crypto.timingSafeEqual(bufEsperado, bufRecibido)) {
-          this.logger.warn('[Livees Checkout] Firma de webhook inválida.');
-          return { valido: false, evento: 'invalid_signature' };
-        }
-      } catch (err) {
-        this.logger.warn('[Livees Checkout] Error al verificar firma HMAC:', err);
+      const hmacEsperado = crypto
+        .createHmac('sha256', webhookSecret)
+        .update(payloadParaFirma)
+        .digest('hex');
+
+      const bufEsperado = Buffer.from(hmacEsperado);
+      const bufRecibido = Buffer.from(firmaRecibida);
+
+      if (bufEsperado.length !== bufRecibido.length || !crypto.timingSafeEqual(bufEsperado, bufRecibido)) {
+        this.logger.warn('[Livees Checkout] Firma de webhook inválida.');
         return { valido: false, evento: 'invalid_signature' };
       }
+    } catch (err) {
+      this.logger.warn('[Livees Checkout] Error al verificar firma HMAC:', err);
+      return { valido: false, evento: 'invalid_signature' };
     }
 
     // Normalizar evento y estado

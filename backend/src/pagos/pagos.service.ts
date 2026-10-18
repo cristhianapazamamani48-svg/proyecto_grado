@@ -5,12 +5,14 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { MockPaymentProvider } from './providers/mock-payment.provider';
 import { MercadoPagoProvider } from './providers/mercadopago.provider';
 import { PayPalProvider } from './providers/paypal.provider';
 import { LiveesProvider } from './providers/livees.provider';
 import { PaymentProvider, CheckoutParams } from './interfaces/payment-provider.interface';
+import { LIMITES_PREDETERMINADOS } from '../superadmin/superadmin.service';
 import {
   ProveedorPago,
   TipoPlan,
@@ -44,7 +46,7 @@ export class PagosService {
   }
 
   private getProvider(nombre?: ProveedorPago): PaymentProvider {
-    const prov = process.env.PAYMENT_PROVIDER as ProveedorPago || nombre || ProveedorPago.MOCK_SANDBOX;
+    const prov = nombre || (process.env.PAYMENT_PROVIDER as ProveedorPago) || ProveedorPago.MOCK_SANDBOX;
     return this.providers.get(prov) || this.mockProvider;
   }
 
@@ -101,6 +103,7 @@ export class PagosService {
         montoLocal: precios.bob,
         monedaLocal: 'BOB',
         estado: EstadoPagoTransaccion.PENDIENTE,
+        plan: planDeseado,
         proveedor: provider.nombreProveedor,
         idTransaccionExterna: checkoutResult.idTransaccionExterna,
         metodoPago: checkoutResult.metodoPago,
@@ -155,9 +158,15 @@ export class PagosService {
   // ─────────────────────────────────────────────────────────────────
   // PROCESAR WEBHOOK DE PASARELA (IDEMPOTENTE & VERIFICADO)
   // ─────────────────────────────────────────────────────────────────
-  async procesarWebhook(proveedorNombre: ProveedorPago, body: any, headers: any) {
+  async procesarWebhook(proveedorNombre: ProveedorPago, body: any, headers: any, rawBody?: Buffer | string) {
+    // Bloquear el webhook Sandbox en producción para evitar activaciones gratuitas.
+    // El endpoint de aprobación manual (aprobarPagoSandbox) ya tiene su propio guard de NODE_ENV.
+    if (proveedorNombre === ProveedorPago.MOCK_SANDBOX && process.env.NODE_ENV === 'production') {
+      throw new BadRequestException('El webhook Sandbox está deshabilitado en el entorno de producción.');
+    }
+
     const provider = this.providers.get(proveedorNombre) || this.mockProvider;
-    const verificacion = await provider.verificarWebhooks(body, headers);
+    const verificacion = await provider.verificarWebhooks(body, headers, rawBody);
 
     if (!verificacion.valido) {
       throw new BadRequestException('Firma de webhook no válida o ausente.');
@@ -176,7 +185,10 @@ export class PagosService {
         : EstadoSuscripcion.SUSPENDIDA_POR_PAGO;
 
       const sub = await this.prisma.suscripcionOrganizacion.findFirst({
-        where: { idSuscripcionExterna: verificacion.idSuscripcionExterna },
+        where: {
+          idSuscripcionExterna: verificacion.idSuscripcionExterna,
+          proveedor: proveedorNombre,
+        },
       });
 
       if (!sub) {
@@ -221,7 +233,10 @@ export class PagosService {
     if (!tx && verificacion.idSuscripcionExterna) {
       // Es posible que sea un webhook de renovación (nuevo ID de transacción pero ID de suscripción existente)
       const sub = await this.prisma.suscripcionOrganizacion.findFirst({
-        where: { idSuscripcionExterna: verificacion.idSuscripcionExterna },
+        where: {
+          idSuscripcionExterna: verificacion.idSuscripcionExterna,
+          proveedor: proveedorNombre,
+        },
       });
 
       if (sub && verificacion.monto !== undefined && verificacion.estadoPago !== 'PENDIENTE') {
@@ -234,10 +249,11 @@ export class PagosService {
                moneda: 'USD',
                montoLocal: verificacion.moneda !== 'USD' ? verificacion.monto : (sub.montoLocal || 0),
                monedaLocal: 'BOB',
+               plan: sub.plan,   // Propagar el plan de la suscripción a la TX de renovación
                estado: EstadoPagoTransaccion.PENDIENTE,
                proveedor: proveedorNombre,
                idTransaccionExterna: verificacion.idTransaccionExterna,
-               metodoPago: 'RENOVACION'
+               metodoPago: 'RENOVACION',
             }
          });
       }
@@ -442,36 +458,37 @@ export class PagosService {
   // ─────────────────────────────────────────────────────────────────
   private async aprobarTransaccionAtomica(tx: any, proveedorNombre: ProveedorPago, idSuscripcionExterna?: string, idCobroRecibido?: string) {
     const subActual = await this.prisma.suscripcionOrganizacion.findUnique({
-      where: { idOrganizacion: tx.idOrganizacion }
+      where: { idOrganizacion: tx.idOrganizacion },
     });
 
     const fechaInicio = new Date();
     const fechaFinPeriodo = new Date();
-    
+
     if (subActual?.estado === EstadoSuscripcion.ACTIVA && subActual.fechaFinPeriodo && subActual.fechaFinPeriodo > new Date()) {
-      // Extender desde la fecha de expiración actual si aún está activa
+      // Extender 30 días exactos desde la fecha de expiración actual si aún está activa
       fechaFinPeriodo.setTime(subActual.fechaFinPeriodo.getTime());
-      fechaFinPeriodo.setMonth(fechaFinPeriodo.getMonth() + 1);
+      fechaFinPeriodo.setDate(fechaFinPeriodo.getDate() + 30);
     } else {
-      // Si estaba vencida o en gracia, extender un mes desde hoy
-      fechaFinPeriodo.setMonth(fechaFinPeriodo.getMonth() + 1);
+      // Si estaba vencida, cancelada o en gracia, extender 30 días desde hoy
+      fechaFinPeriodo.setDate(fechaFinPeriodo.getDate() + 30);
     }
 
-    const cobroParaIdempotencia = idCobroRecibido || tx.idTransaccionExterna;
+    const planAprobado: TipoPlan = tx.plan || TipoPlan.MAESTRO_PRO;
+    const limitesPlan = LIMITES_PREDETERMINADOS[planAprobado] || LIMITES_PREDETERMINADOS.MAESTRO_PRO;
 
     await this.prisma.$transaction([
       this.prisma.transaccionPago.update({
         where: { idTransaccion: tx.idTransaccion },
         data: {
           estado: EstadoPagoTransaccion.APROBADO,
-          firmaWebhook: `${proveedorNombre}:${cobroParaIdempotencia}`.slice(0, 250),
+          firmaWebhook: `${proveedorNombre}:${idCobroRecibido || tx.idTransaccionExterna}`.slice(0, 250),
         },
       }),
       this.prisma.suscripcionOrganizacion.upsert({
         where: { idOrganizacion: tx.idOrganizacion },
         create: {
           idOrganizacion: tx.idOrganizacion,
-          plan: TipoPlan.MAESTRO_PRO,
+          plan: planAprobado,
           estado: EstadoSuscripcion.ACTIVA,
           proveedor: proveedorNombre,
           idSuscripcionExterna: idSuscripcionExterna || tx.idTransaccionExterna,
@@ -485,7 +502,7 @@ export class PagosService {
           autoRenovar: true,
         },
         update: {
-          plan: TipoPlan.MAESTRO_PRO,
+          plan: planAprobado,
           estado: EstadoSuscripcion.ACTIVA,
           proveedor: proveedorNombre,
           idSuscripcionExterna: idSuscripcionExterna || tx.idTransaccionExterna,
@@ -498,26 +515,29 @@ export class PagosService {
       this.prisma.organizacion.update({
         where: { idOrganizacion: tx.idOrganizacion },
         data: {
-          plan: TipoPlan.MAESTRO_PRO,
-          limiteEvaluaciones: 99999,
-          limiteCorreccionesIaMes: 99999,
-          diasCaducidadEvaluacion: 99999,
-          esContenidoPrivado: true,
+          plan: planAprobado,
+          limiteDocentes: limitesPlan.limiteDocentes,
+          limiteEstudiantes: limitesPlan.limiteEstudiantes,
+          limiteEvaluaciones: limitesPlan.limiteEvaluaciones,
+          limiteCorreccionesIaMes: limitesPlan.limiteCorreccionesIaMes,
+          diasCaducidadEvaluacion: planAprobado === TipoPlan.GRATUITO ? 7 : 99999,
+          esContenidoPrivado: planAprobado !== TipoPlan.GRATUITO,
           iaHabilitada: true,
         },
       }),
     ]);
 
-    this.logger.log(`[Suscripción Activada] Institución ${tx.idOrganizacion} actualizada a Plan MAESTRO_PRO.`);
+    this.logger.log(`[Suscripción Activada] Institución ${tx.idOrganizacion} actualizada a Plan ${planAprobado}.`);
   }
 
   private async rechazarTransaccionAtomica(tx: any, motivoFallo?: string, idCobroRecibido?: string) {
-    const fechaFinGracia = new Date();
-    fechaFinGracia.setDate(fechaFinGracia.getDate() + 7);
-
     const cobroParaIdempotencia = idCobroRecibido || tx.idTransaccionExterna;
 
-    await this.prisma.$transaction([
+    const subActual = await this.prisma.suscripcionOrganizacion.findUnique({
+      where: { idOrganizacion: tx.idOrganizacion },
+    });
+
+    const operaciones: any[] = [
       this.prisma.transaccionPago.update({
         where: { idTransaccion: tx.idTransaccion },
         data: {
@@ -526,14 +546,81 @@ export class PagosService {
           detalleError: motivoFallo || 'Pago rechazado por el procesador',
         },
       }),
-      this.prisma.suscripcionOrganizacion.updateMany({
-        where: { idOrganizacion: tx.idOrganizacion },
-        data: {
-          estado: EstadoSuscripcion.EN_PERIODO_GRACIA,
-          fechaFinGracia,
-        },
-      }),
-    ]);
+    ];
+
+    // Solo se concede período de gracia de 7 días si la suscripción estaba ACTIVA.
+    // Si ya estaba CANCELADA o SUSPENDIDA_POR_PAGO, no otorgar días adicionales de gracia.
+    if (subActual && subActual.estado === EstadoSuscripcion.ACTIVA) {
+      const fechaFinGracia = new Date();
+      fechaFinGracia.setDate(fechaFinGracia.getDate() + 7);
+
+      operaciones.push(
+        this.prisma.suscripcionOrganizacion.update({
+          where: { idOrganizacion: tx.idOrganizacion },
+          data: {
+            estado: EstadoSuscripcion.EN_PERIODO_GRACIA,
+            fechaFinGracia,
+          },
+        }),
+      );
+    }
+
+    await this.prisma.$transaction(operaciones);
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // TAREA PROGRAMADA: DEGRADACIÓN DE PLANES Y SUSPENSIONES VENCIDAS
+  // ─────────────────────────────────────────────────────────────────
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async degradarSuscripcionesVencidas() {
+    this.logger.log('[Cron Degradación] Ejecutando revisión de suscripciones vencidas...');
+    const ahora = new Date();
+
+    // 1. Período de gracia expirado -> SUSPENDIDA_POR_PAGO
+    const suspendidas = await this.prisma.suscripcionOrganizacion.updateMany({
+      where: {
+        estado: EstadoSuscripcion.EN_PERIODO_GRACIA,
+        fechaFinGracia: { lt: ahora },
+      },
+      data: {
+        estado: EstadoSuscripcion.SUSPENDIDA_POR_PAGO,
+      },
+    });
+
+    if (suspendidas.count > 0) {
+      this.logger.warn(`[Cron Degradación] ${suspendidas.count} suscripciones suspendidas por expiración de gracia.`);
+    }
+
+    // 2. Suscripciones CANCELADAS cuyo periodo pagado expiró -> degradar a GRATUITO
+    const canceladasVencidas = await this.prisma.suscripcionOrganizacion.findMany({
+      where: {
+        estado: EstadoSuscripcion.CANCELADA,
+        fechaFinPeriodo: { lt: ahora },
+      },
+      include: {
+        organizacion: true,
+      },
+    });
+
+    const limitesGratuito = LIMITES_PREDETERMINADOS[TipoPlan.GRATUITO];
+
+    for (const sub of canceladasVencidas) {
+      if (sub.organizacion && sub.organizacion.plan !== TipoPlan.GRATUITO) {
+        await this.prisma.organizacion.update({
+          where: { idOrganizacion: sub.idOrganizacion },
+          data: {
+            plan: TipoPlan.GRATUITO,
+            limiteDocentes: limitesGratuito.limiteDocentes,
+            limiteEstudiantes: limitesGratuito.limiteEstudiantes,
+            limiteEvaluaciones: limitesGratuito.limiteEvaluaciones,
+            limiteCorreccionesIaMes: limitesGratuito.limiteCorreccionesIaMes,
+            diasCaducidadEvaluacion: 7,
+            esContenidoPrivado: false,
+          },
+        });
+        this.logger.log(`[Cron Degradación] Institución ${sub.idOrganizacion} degradada a Plan GRATUITO.`);
+      }
+    }
   }
 
 
@@ -585,7 +672,11 @@ export class PagosService {
         iaUsadasMes: usoIaMes,
         iaLimiteMes: org.limiteCorreccionesIaMes,
       },
-      historialTransacciones: org.transacciones,
+      historialTransacciones: org.transacciones.map((t) => ({
+        ...t,
+        planContratado: t.plan,
+        montoUsd: t.monto,
+      })),
     };
   }
 
@@ -643,32 +734,38 @@ export class PagosService {
 
     if (org.suscripcion?.estado === EstadoSuscripcion.EN_PERIODO_GRACIA && org.suscripcion.fechaFinGracia) {
       if (new Date() > org.suscripcion.fechaFinGracia) {
-        // Podríamos actualizar el estado a SUSPENDIDA_POR_PAGO asíncronamente aquí
-        this.prisma.suscripcionOrganizacion.update({
-           where: { idOrganizacion: org.idOrganizacion },
-           data: { estado: EstadoSuscripcion.SUSPENDIDA_POR_PAGO }
-        }).catch(() => {});
+        await this.prisma.suscripcionOrganizacion.update({
+          where: { idOrganizacion: org.idOrganizacion },
+          data: { estado: EstadoSuscripcion.SUSPENDIDA_POR_PAGO },
+        });
         throw new ForbiddenException('El período de gracia ha expirado. Por favor regulariza tu pago para continuar.');
       }
     }
 
     if (org.suscripcion?.estado === EstadoSuscripcion.CANCELADA && org.suscripcion.fechaFinPeriodo) {
-       if (new Date() > org.suscripcion.fechaFinPeriodo) {
-         // Degradamos plan asíncronamente
-         this.prisma.organizacion.update({
-            where: { idOrganizacion: org.idOrganizacion },
-            data: { 
-               plan: 'GRATUITO',
-               limiteDocentes: 5,
-               limiteEvaluaciones: 20,
-               limiteCorreccionesIaMes: 10,
-            }
-         }).catch(() => {});
-         if (accion !== 'CREAR_EVALUACION') {
-           // Dejarlo pasar al siguiente check que mirará org.plan actualizado, o fallar
-           // Lo dejamos pasar porque los checks de abajo validan contra los límites actuales
-         }
-       }
+      if (new Date() > org.suscripcion.fechaFinPeriodo) {
+        const limitesGratuito = LIMITES_PREDETERMINADOS[TipoPlan.GRATUITO];
+        const orgActualizada = await this.prisma.organizacion.update({
+          where: { idOrganizacion: org.idOrganizacion },
+          data: {
+            plan: TipoPlan.GRATUITO,
+            limiteDocentes: limitesGratuito.limiteDocentes,
+            limiteEstudiantes: limitesGratuito.limiteEstudiantes,
+            limiteEvaluaciones: limitesGratuito.limiteEvaluaciones,
+            limiteCorreccionesIaMes: limitesGratuito.limiteCorreccionesIaMes,
+            diasCaducidadEvaluacion: 7,
+            esContenidoPrivado: false,
+          },
+        });
+        // Refrescar entidad en memoria para que los checks subsecuentes utilicen las cuotas degradadas
+        org.plan = orgActualizada.plan;
+        org.limiteDocentes = orgActualizada.limiteDocentes;
+        org.limiteEstudiantes = orgActualizada.limiteEstudiantes;
+        org.limiteEvaluaciones = orgActualizada.limiteEvaluaciones;
+        org.limiteCorreccionesIaMes = orgActualizada.limiteCorreccionesIaMes;
+        org.diasCaducidadEvaluacion = orgActualizada.diasCaducidadEvaluacion;
+        org.esContenidoPrivado = orgActualizada.esContenidoPrivado;
+      }
     }
 
     if (accion === 'CREAR_EVALUACION') {

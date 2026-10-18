@@ -51,8 +51,8 @@ async function buildModule() {
       {
         provide: PrismaService,
         useValue: {
-          transaccionPago: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
-          suscripcionOrganizacion: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), updateMany: jest.fn() },
+          transaccionPago: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+          suscripcionOrganizacion: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn().mockResolvedValue({ estado: 'ACTIVA' }), findFirst: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
           organizacion: { findUnique: jest.fn(), update: jest.fn() },
           $transaction: jest.fn().mockResolvedValue([]),
         },
@@ -1146,6 +1146,16 @@ describe('PagosService — aprobarPagoSandbox', () => {
     const realMockProv = new MockPaymentProvider();
     await expect(realMockProv.crearSesionCheckout({} as any)).rejects.toThrow(/no está disponible en producción/);
   });
+
+  it('procesarWebhook rechaza el proveedor MOCK_SANDBOX en producción a nivel de servicio', async () => {
+    process.env.NODE_ENV = 'production';
+    await expect(
+      service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {}),
+    ).rejects.toThrow(/Sandbox.*deshabilitado.*producción/);
+    // No llega a verificarWebhooks ni a $transaction
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    process.env.NODE_ENV = 'test';
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1215,7 +1225,22 @@ describe('LiveesProvider — Pagos Bolivia', () => {
     expect(r.evento).toBe('config_error');
   });
 
-  it('verificarWebhooks aprueba evento qr.paid o payment.completed', async () => {
+  it('verificarWebhooks rechaza si no viene firma (mitigación bypass)', async () => {
+    process.env.LIVEES_WEBHOOK_SECRET = 'secreto_livees_super_seguro_2026';
+    const body = {
+      event: 'qr.paid',
+      status: 'PAID',
+      transaction_id: 'livees_tx_9988',
+      amount: 50,
+      currency: 'BOB',
+    };
+
+    const r = await livees.verificarWebhooks(body, {});
+    expect(r.valido).toBe(false);
+    expect(r.evento).toBe('missing_signature');
+  });
+
+  it('verificarWebhooks aprueba evento con firma válida calculada', async () => {
     process.env.LIVEES_WEBHOOK_SECRET = 'secreto_livees_super_seguro_2026';
     const body = {
       event: 'qr.paid',
@@ -1225,8 +1250,14 @@ describe('LiveesProvider — Pagos Bolivia', () => {
       currency: 'BOB',
       external_reference: 'livees_ref_local',
     };
+    const crypto = require('crypto');
+    const rawPayload = JSON.stringify(body);
+    const signature = crypto
+      .createHmac('sha256', 'secreto_livees_super_seguro_2026')
+      .update(rawPayload)
+      .digest('hex');
 
-    const r = await livees.verificarWebhooks(body, {});
+    const r = await livees.verificarWebhooks(body, { 'x-livees-signature': signature }, rawPayload);
     expect(r.valido).toBe(true);
     expect(r.estadoPago).toBe('APROBADO');
     expect(r.monto).toBe(50);
@@ -1234,7 +1265,20 @@ describe('LiveesProvider — Pagos Bolivia', () => {
     expect(r.idTransaccionExterna).toBe('livees_tx_9988');
   });
 
-  it('verificarWebhooks rechaza evento payment.failed', async () => {
+  it('verificarWebhooks rechaza evento con firma incorrecta', async () => {
+    process.env.LIVEES_WEBHOOK_SECRET = 'secreto_livees_super_seguro_2026';
+    const body = {
+      event: 'qr.paid',
+      status: 'PAID',
+      transaction_id: 'livees_tx_9988',
+    };
+
+    const r = await livees.verificarWebhooks(body, { 'x-livees-signature': 'bad_signature_with_equal_length_1234567890abcdef1234567890abcdef1234' });
+    expect(r.valido).toBe(false);
+    expect(r.evento).toBe('invalid_signature');
+  });
+
+  it('verificarWebhooks rechaza evento payment.failed con firma válida', async () => {
     process.env.LIVEES_WEBHOOK_SECRET = 'secreto_livees_super_seguro_2026';
     const body = {
       event: 'payment.failed',
@@ -1244,10 +1288,208 @@ describe('LiveesProvider — Pagos Bolivia', () => {
       currency: 'BOB',
       error_message: 'Fondos insuficientes en cuenta bancaria',
     };
+    const crypto = require('crypto');
+    const rawPayload = JSON.stringify(body);
+    const signature = crypto
+      .createHmac('sha256', 'secreto_livees_super_seguro_2026')
+      .update(rawPayload)
+      .digest('hex');
 
-    const r = await livees.verificarWebhooks(body, {});
+    const r = await livees.verificarWebhooks(body, { 'x-livees-signature': signature }, rawPayload);
     expect(r.valido).toBe(true);
     expect(r.estadoPago).toBe('RECHAZADO');
     expect(r.motivoFallo).toBe('Fondos insuficientes en cuenta bancaria');
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Suite 7: Fase 2 — Degradación de Suscripciones y Límites
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('PagosService — Cron degradarSuscripcionesVencidas', () => {
+  let service: PagosService;
+  let prisma: PrismaService;
+  let module: TestingModule;
+
+  beforeEach(async () => {
+    module = await buildModule();
+    service = module.get(PagosService);
+    prisma = module.get(PrismaService);
+  });
+
+  it('suspende suscripciones cuyo período de gracia ha expirado', async () => {
+    (prisma.suscripcionOrganizacion.updateMany as jest.Mock).mockResolvedValueOnce({ count: 3 });
+    (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    await service.degradarSuscripcionesVencidas();
+
+    expect(prisma.suscripcionOrganizacion.updateMany).toHaveBeenCalledWith({
+      where: {
+        estado: 'EN_PERIODO_GRACIA',
+        fechaFinGracia: { lt: expect.any(Date) },
+      },
+      data: {
+        estado: 'SUSPENDIDA_POR_PAGO',
+      },
+    });
+  });
+
+  it('degrada organizaciones a GRATUITO cuando la suscripción CANCELADA expira', async () => {
+    (prisma.suscripcionOrganizacion.updateMany as jest.Mock).mockResolvedValueOnce({ count: 0 });
+    (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        idOrganizacion: 42,
+        estado: 'CANCELADA',
+        organizacion: {
+          idOrganizacion: 42,
+          plan: 'MAESTRO_PRO',
+        },
+      },
+    ]);
+    (prisma.organizacion.update as jest.Mock).mockResolvedValueOnce({});
+
+    await service.degradarSuscripcionesVencidas();
+
+    expect(prisma.organizacion.update).toHaveBeenCalledWith({
+      where: { idOrganizacion: 42 },
+      data: expect.objectContaining({
+        plan: 'GRATUITO',
+        limiteDocentes: 5,
+        limiteEvaluaciones: 20,
+        limiteCorreccionesIaMes: 10,
+        esContenidoPrivado: false,
+      }),
+    });
+  });
+});
+
+describe('PagosService — verificarPermisosYCuotas y Degradación Inline', () => {
+  let service: PagosService;
+  let prisma: PrismaService;
+  let module: TestingModule;
+
+  beforeEach(async () => {
+    module = await buildModule();
+    service = module.get(PagosService);
+    prisma = module.get(PrismaService);
+  });
+
+  it('bloquea inmediatamente si el período de gracia expiró', async () => {
+    const ayer = new Date();
+    ayer.setDate(ayer.getDate() - 1);
+
+    (prisma.organizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+      idOrganizacion: 5,
+      plan: 'MAESTRO_PRO',
+      suscripcion: {
+        estado: 'EN_PERIODO_GRACIA',
+        fechaFinGracia: ayer,
+      },
+    });
+    (prisma.suscripcionOrganizacion.update as jest.Mock).mockResolvedValueOnce({});
+
+    await expect(service.verificarPermisosYCuotas(5, 'CREAR_EVALUACION')).rejects.toThrow(
+      'El período de gracia ha expirado',
+    );
+    expect(prisma.suscripcionOrganizacion.update).toHaveBeenCalledWith({
+      where: { idOrganizacion: 5 },
+      data: { estado: 'SUSPENDIDA_POR_PAGO' },
+    });
+  });
+
+  it('degrada inline y bloquea CREAR_EVALUACION si supera el límite gratuito tras expiración de cancelación', async () => {
+    const ayer = new Date();
+    ayer.setDate(ayer.getDate() - 1);
+
+    (prisma.organizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+      idOrganizacion: 5,
+      plan: 'MAESTRO_PRO',
+      limiteEvaluaciones: 99999,
+      suscripcion: {
+        estado: 'CANCELADA',
+        fechaFinPeriodo: ayer,
+      },
+    });
+    (prisma.organizacion.update as jest.Mock).mockResolvedValueOnce({
+      plan: 'GRATUITO',
+      limiteDocentes: 5,
+      limiteEstudiantes: 50,
+      limiteEvaluaciones: 20,
+      limiteCorreccionesIaMes: 10,
+      diasCaducidadEvaluacion: 7,
+      esContenidoPrivado: false,
+    });
+    // Simular que ya tiene 20 evaluaciones creadas
+    (prisma as any).evaluacion = { count: jest.fn().mockResolvedValue(20) };
+
+    await expect(service.verificarPermisosYCuotas(5, 'CREAR_EVALUACION')).rejects.toThrow(
+      'Has alcanzado el límite de 20 evaluaciones',
+    );
+  });
+
+  it('degrada inline y bloquea PRIVACIDAD si la suscripción cancelada expiró', async () => {
+    const ayer = new Date();
+    ayer.setDate(ayer.getDate() - 1);
+
+    (prisma.organizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+      idOrganizacion: 5,
+      plan: 'MAESTRO_PRO',
+      suscripcion: {
+        estado: 'CANCELADA',
+        fechaFinPeriodo: ayer,
+      },
+    });
+    (prisma.organizacion.update as jest.Mock).mockResolvedValueOnce({
+      plan: 'GRATUITO',
+      limiteDocentes: 5,
+      limiteEstudiantes: 50,
+      limiteEvaluaciones: 20,
+      limiteCorreccionesIaMes: 10,
+      diasCaducidadEvaluacion: 7,
+      esContenidoPrivado: false,
+    });
+
+    await expect(service.verificarPermisosYCuotas(5, 'PRIVACIDAD')).rejects.toThrow(
+      'Hacer contenido privado requiere el Plan Maestro Pro',
+    );
+  });
+});
+
+describe('PagosService — rechazarTransaccionAtomica no otorga gracia a canceladas', () => {
+  let service: PagosService;
+  let prisma: PrismaService;
+  let module: TestingModule;
+  let mockProv: MockPaymentProvider;
+
+  beforeEach(async () => {
+    module = await buildModule();
+    service = module.get(PagosService);
+    prisma = module.get(PrismaService);
+    mockProv = module.get(MockPaymentProvider);
+  });
+
+  it('si la suscripción ya estaba CANCELADA, solo actualiza la TX a RECHAZADO y no extiende gracia', async () => {
+    (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce({
+      valido: true,
+      idTransaccionExterna: 'tx_cancelada_1',
+      estadoPago: 'RECHAZADO',
+      motivoFallo: 'Fallo cobro recurrente',
+    });
+
+    (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(
+      makeTx({ idTransaccionExterna: 'tx_cancelada_1', estado: EstadoPagoTransaccion.PENDIENTE }),
+    );
+    (prisma.suscripcionOrganizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+      idOrganizacion: 10,
+      estado: 'CANCELADA',
+    });
+
+    const res = await service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {});
+    expect(res.estado).toBe('RECHAZADO');
+
+    // En $transaction solo debe haber 1 operación (la actualización de TX), NO la de gracia
+    const ops = (prisma.$transaction as jest.Mock).mock.calls[0][0];
+    expect(ops.length).toBe(1);
+  });
+});
+

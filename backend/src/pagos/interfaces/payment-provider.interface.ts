@@ -38,6 +38,6 @@ export interface WebhookVerificationResult {
 export interface PaymentProvider {
   nombreProveedor: ProveedorPago;
   crearSesionCheckout(params: CheckoutParams): Promise<CheckoutResult>;
-  verificarWebhooks(body: any, headers: any): Promise<WebhookVerificationResult>;
+  verificarWebhooks(body: any, headers: any, rawBody?: Buffer | string): Promise<WebhookVerificationResult>;
   cancelarSuscripcion(idSuscripcionExterna: string): Promise<boolean>;
 }

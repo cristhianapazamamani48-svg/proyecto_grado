@@ -483,6 +483,7 @@ model TransaccionPago {
   montoLocal           Decimal?              @map("monto_local") @db.Decimal(10, 2)
   monedaLocal          String?               @default("BOB") @map("moneda_local") @db.VarChar(10)
   estado               EstadoPagoTransaccion @default(PENDIENTE)
+  plan                 TipoPlan              @default(MAESTRO_PRO)
   proveedor            ProveedorPago         @default(MOCK_SANDBOX)
   idTransaccionExterna String?               @unique @map("id_transaccion_externa") @db.VarChar(100)
   metodoPago           String?               @map("metodo_pago") @db.VarChar(50)

@@ -14,7 +14,7 @@ import {
   EstadoMembresia,
 } from '@prisma/client';
 
-const LIMITES_PREDETERMINADOS: Record<TipoPlan, {
+export const LIMITES_PREDETERMINADOS: Record<TipoPlan, {
   limiteDocentes: number;
   limiteEstudiantes: number;
   limiteEvaluaciones: number;
