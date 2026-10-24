@@ -1,6 +1,7 @@
 import { Controller, Post, Body } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
+import { OlvidePasswordDto, RestablecerPasswordDto } from './dto/password-recovery.dto';
 
 // Límite estricto contra fuerza bruta y creación masiva de cuentas.
 // 20/min por IP: suficiente para un aula/logins simultáneos tras un NAT.
@@ -22,6 +23,18 @@ export class AuthController {
   @Post('google')
   async loginGoogle(@Body() body: { idToken: string }) {
     return this.authService.loginConGoogle(body.idToken);
+  }
+
+  @Post('olvide-password')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  async olvidePassword(@Body() body: OlvidePasswordDto) {
+    return this.authService.solicitarRecuperacionPassword(body.correo);
+  }
+
+  @Post('restablecer-password')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  async restablecerPassword(@Body() body: RestablecerPasswordDto) {
+    return this.authService.restablecerPassword(body.token, body.nuevaPassword);
   }
 
   @Post('estudiante/registro')

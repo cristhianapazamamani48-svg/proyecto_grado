@@ -4,12 +4,14 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { RolUsuario, TipoPlan, EstadoSuscripcion, ProveedorPago } from '@prisma/client';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly mailService: MailService,
   ) {}
 
   async asegurarEspacioPersonalDocente(usuario: { idUsuario: number; nombre: string; idOrganizacionActual?: number | null }) {
@@ -96,6 +98,91 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException('Token de Google inválido o expirado.');
     }
+  }
+
+  async solicitarRecuperacionPassword(correo: string) {
+    const mensaje = 'Si existe una cuenta compatible, recibirás instrucciones para restablecer tu contrasena.';
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { correo: correo.toLowerCase().trim() },
+    });
+
+    // SUPER_ADMIN conserva un flujo de acceso separado. El modelo actual exige un
+    // hash de contrasena para los demas usuarios, incluso los creados con Google.
+    if (!usuario || usuario.rol === RolUsuario.SUPER_ADMIN) {
+      return { mensaje };
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const ahora = new Date();
+    const expiraEn = new Date(ahora);
+    expiraEn.setHours(expiraEn.getHours() + 1);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tokenRecuperacion.updateMany({
+        where: { idUsuario: usuario.idUsuario, usadoEn: null },
+        data: { usadoEn: ahora },
+      });
+      await tx.tokenRecuperacion.create({
+        data: { idUsuario: usuario.idUsuario, tokenHash, expiraEn },
+      });
+    });
+
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3002').replace(/\/$/, '');
+    const enlace = `${frontendUrl}/restablecer-password?token=${encodeURIComponent(token)}`;
+    await this.mailService.enviarRecuperacionPassword({
+      to: usuario.correo,
+      nombre: usuario.nombre,
+      enlace,
+    });
+
+    return { mensaje };
+  }
+
+  async restablecerPassword(token: string, nuevaPassword: string) {
+    if (nuevaPassword.length < 8) {
+      throw new BadRequestException('La contrasena debe tener al menos 8 caracteres.');
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const recuperacion = await this.prisma.tokenRecuperacion.findUnique({
+      where: { tokenHash },
+      include: { usuario: true },
+    });
+
+    if (
+      !recuperacion ||
+      recuperacion.usadoEn ||
+      recuperacion.expiraEn <= new Date() ||
+      recuperacion.usuario.rol === RolUsuario.SUPER_ADMIN
+    ) {
+      throw new BadRequestException('El enlace de recuperacion no es valido o ya vencio.');
+    }
+
+    const passwordHash = await bcrypt.hash(nuevaPassword, 10);
+    const usadoEn = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      const tokenUsado = await tx.tokenRecuperacion.updateMany({
+        where: {
+          idTokenRecuperacion: recuperacion.idTokenRecuperacion,
+          usadoEn: null,
+          expiraEn: { gt: usadoEn },
+        },
+        data: { usadoEn },
+      });
+
+      if (tokenUsado.count !== 1) {
+        throw new BadRequestException('El enlace de recuperacion no es valido o ya vencio.');
+      }
+
+      await tx.usuario.update({
+        where: { idUsuario: recuperacion.idUsuario },
+        data: { password: passwordHash },
+      });
+    });
+
+    return { mensaje: 'Contrasena restablecida correctamente.' };
   }
 
   async registrarDocente(nombre: string, apellido: string, correo: string, password: string) {

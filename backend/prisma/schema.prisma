@@ -197,8 +197,23 @@ model Usuario {
   usosIa                UsoIaLog[]
   invitacionesEnviadas  InvitacionOrganizacion[] @relation("InvitacionesEnviadas")
   auditoriasAdmin       AuditoriaAdministrativa[]
+  tokensRecuperacion    TokenRecuperacion[]
 
   @@map("usuario")
+}
+
+model TokenRecuperacion {
+  idTokenRecuperacion Int      @id @default(autoincrement()) @map("id_token_recuperacion")
+  idUsuario           Int      @map("id_usuario")
+  tokenHash           String   @unique @map("token_hash") @db.VarChar(64)
+  expiraEn            DateTime @map("expira_en")
+  usadoEn             DateTime? @map("usado_en")
+  creadoEn            DateTime @default(now()) @map("creado_en")
+
+  usuario Usuario @relation(fields: [idUsuario], references: [idUsuario], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([idUsuario], map: "idx_token_recuperacion_usuario")
+  @@map("token_recuperacion")
 }
 
 model Estudiante {

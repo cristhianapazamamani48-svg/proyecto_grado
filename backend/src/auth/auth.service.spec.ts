@@ -5,34 +5,54 @@ import { JwtService } from '@nestjs/jwt';
 import { RolUsuario, TipoPlan, EstadoSuscripcion } from '@prisma/client';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { MailService } from '../mail/mail.service';
 
 describe('AuthService', () => {
   let service: AuthService;
   let prisma: PrismaService;
   let jwt: JwtService;
+  let mail: MailService;
 
   beforeEach(async () => {
+    const prismaMock = {
+      usuario: {
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      organizacion: {
+        create: jest.fn(),
+        findUnique: jest.fn(),
+      },
+      membresia: {
+        create: jest.fn(),
+      },
+      suscripcionOrganizacion: {
+        create: jest.fn(),
+      },
+      tokenRecuperacion: {
+        updateMany: jest.fn(),
+        create: jest.fn(),
+        findUnique: jest.fn(),
+      },
+      $transaction: jest.fn(),
+    };
+    prismaMock.$transaction.mockImplementation((operacion) => operacion({
+      usuario: prismaMock.usuario,
+      tokenRecuperacion: prismaMock.tokenRecuperacion,
+    }));
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         {
           provide: PrismaService,
+          useValue: prismaMock,
+        },
+        {
+          provide: MailService,
           useValue: {
-            usuario: {
-              findUnique: jest.fn(),
-              create: jest.fn(),
-              update: jest.fn(),
-            },
-            organizacion: {
-              create: jest.fn(),
-              findUnique: jest.fn(),
-            },
-            membresia: {
-              create: jest.fn(),
-            },
-            suscripcionOrganizacion: {
-              create: jest.fn(),
-            },
+            enviarRecuperacionPassword: jest.fn().mockResolvedValue(true),
           },
         },
         {
@@ -47,6 +67,7 @@ describe('AuthService', () => {
     service = module.get<AuthService>(AuthService);
     prisma = module.get<PrismaService>(PrismaService);
     jwt = module.get<JwtService>(JwtService);
+    mail = module.get<MailService>(MailService);
   });
 
   describe('registrarDocente', () => {
@@ -255,6 +276,79 @@ describe('AuthService', () => {
       expect(resultado.token).toBe('mock_jwt_token_123');
       expect(resultado.usuario.idUsuario).toBe(4);
       expect(prisma.organizacion.create).toHaveBeenCalled();
+    });
+  });
+
+  describe('recuperacion de contrasena', () => {
+    const correo = 'docente@uub.edu';
+    const usuario = {
+      idUsuario: 9,
+      nombre: 'Ana',
+      correo,
+      rol: RolUsuario.DOCENTE,
+    };
+
+    it('guarda solo el hash del token y responde igual para un correo inexistente', async () => {
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValueOnce(usuario);
+      (prisma.tokenRecuperacion.updateMany as jest.Mock).mockResolvedValueOnce({ count: 0 });
+      (prisma.tokenRecuperacion.create as jest.Mock).mockResolvedValueOnce({});
+
+      const existente = await service.solicitarRecuperacionPassword(correo);
+      const enlace = (mail.enviarRecuperacionPassword as jest.Mock).mock.calls[0][0].enlace as string;
+      const token = new URL(enlace).searchParams.get('token') as string;
+      const tokenHash = (prisma.tokenRecuperacion.create as jest.Mock).mock.calls[0][0].data.tokenHash;
+
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValueOnce(null);
+      const inexistente = await service.solicitarRecuperacionPassword('nadie@uub.edu');
+
+      expect(existente).toEqual(inexistente);
+      expect(tokenHash).not.toBe(token);
+      expect(tokenHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify((prisma.tokenRecuperacion.create as jest.Mock).mock.calls[0][0])).not.toContain(token);
+    });
+
+    it('restablece la contrasena con un token valido de un solo uso', async () => {
+      (prisma.tokenRecuperacion.findUnique as jest.Mock).mockImplementation(({ where }) => Promise.resolve({
+        idTokenRecuperacion: 3,
+        idUsuario: usuario.idUsuario,
+        tokenHash: where.tokenHash,
+        expiraEn: new Date(Date.now() + 60 * 60 * 1000),
+        usadoEn: null,
+        usuario,
+      }));
+      (prisma.tokenRecuperacion.updateMany as jest.Mock).mockResolvedValueOnce({ count: 1 });
+      (prisma.usuario.update as jest.Mock).mockResolvedValueOnce({});
+
+      await expect(service.restablecerPassword('token-valido', 'nueva-clave')).resolves.toEqual({
+        mensaje: 'Contrasena restablecida correctamente.',
+      });
+      const passwordHash = (prisma.usuario.update as jest.Mock).mock.calls[0][0].data.password;
+      await expect(bcrypt.compare('nueva-clave', passwordHash)).resolves.toBe(true);
+    });
+
+    it.each([
+      ['expirado', { expiraEn: new Date(Date.now() - 1000), usadoEn: null }],
+      ['usado', { expiraEn: new Date(Date.now() + 1000), usadoEn: new Date() }],
+      ['inexistente', null],
+    ])('rechaza un token %s', async (_caso, datos) => {
+      (prisma.tokenRecuperacion.findUnique as jest.Mock).mockResolvedValueOnce(
+        datos && {
+          idTokenRecuperacion: 3,
+          idUsuario: usuario.idUsuario,
+          usuario,
+          ...datos,
+        },
+      );
+
+      await expect(service.restablecerPassword('token-invalido', 'nueva-clave')).rejects.toThrow(
+        'El enlace de recuperacion no es valido o ya vencio.',
+      );
+    });
+
+    it('rechaza contrasenas de menos de ocho caracteres', async () => {
+      await expect(service.restablecerPassword('token', 'corta')).rejects.toThrow(
+        'La contrasena debe tener al menos 8 caracteres.',
+      );
     });
   });
 });

@@ -175,6 +175,12 @@ export default function DocenteLoginPage() {
                     {cargando ? 'Procesando...' : 'Login'}
                   </button>
 
+                  <div className="text-right">
+                    <Link href="/olvide-password" className="text-xs text-blue-600 hover:underline">
+                      ¿Olvidaste tu contrasena?
+                    </Link>
+                  </div>
+
                   {/* Google Button Separator */}
                   <div className="flex items-center my-3">
                     <div className="flex-grow border-t border-slate-200"></div>
