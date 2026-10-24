@@ -8,6 +8,7 @@ import { MockPaymentProvider } from './providers/mock-payment.provider';
 import { MercadoPagoProvider } from './providers/mercadopago.provider';
 import { PayPalProvider } from './providers/paypal.provider';
 import { LiveesProvider } from './providers/livees.provider';
+import { MailService } from '../mail/mail.service';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers compartidos
@@ -25,6 +26,7 @@ function makeTx(overrides: Record<string, any> = {}) {
     montoLocal: 50,
     monedaLocal: 'BOB',
     plan: TipoPlan.MAESTRO_PRO,
+    periodoMeses: 1,
     ...overrides,
   };
 }
@@ -48,8 +50,11 @@ function makeVerificacion(overrides: Record<string, any> = {}) {
 async function buildModule() {
   const prismaMock: any = {
     transaccionPago: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    usuario: { findUnique: jest.fn() },
     suscripcionOrganizacion: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn().mockResolvedValue({ estado: 'ACTIVA' }), findFirst: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
     organizacion: { findUnique: jest.fn(), update: jest.fn() },
+    membresia: { findMany: jest.fn().mockResolvedValue([]) },
+    avisoVencimiento: { create: jest.fn(), deleteMany: jest.fn() },
     eventoWebhook: {
       create: jest.fn().mockResolvedValue({ idEventoWebhook: 1 }),
       findUnique: jest.fn(),
@@ -99,6 +104,13 @@ async function buildModule() {
           crearSesionCheckout: jest.fn(),
           verificarWebhooks: jest.fn(),
           cancelarSuscripcion: jest.fn(),
+        },
+      },
+      {
+        provide: MailService,
+        useValue: {
+          enviarReciboPago: jest.fn().mockResolvedValue(true),
+          enviarAvisoVencimiento: jest.fn().mockResolvedValue(true),
         },
       },
     ],
@@ -535,6 +547,109 @@ describe('PagosService — procesarWebhook', () => {
     );
     // La suscripción fue extendida
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PagosService — períodos prepagados y avisos', () => {
+  let service: PagosService;
+  let prisma: any;
+  let mail: any;
+
+  beforeEach(async () => {
+    const module = await buildModule();
+    service = module.get(PagosService);
+    prisma = module.get(PrismaService);
+    mail = module.get(MailService);
+  });
+
+  it.each([
+    [1, new Date(2026, 1, 28)],
+    [3, new Date(2026, 3, 30)],
+    [12, new Date(2027, 0, 31)],
+  ])('suma %i mes(es) de calendario', (periodoMeses, esperado) => {
+    expect((service as any).sumarMesesCalendario(new Date(2026, 0, 31), periodoMeses)).toEqual(esperado);
+  });
+
+  it('renueva anticipadamente desde el vencimiento vigente', async () => {
+    jest.useFakeTimers().setSystemTime(new Date(2026, 0, 15, 12));
+    const vencimiento = new Date(2026, 5, 15);
+    (prisma.suscripcionOrganizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+      estado: EstadoSuscripcion.ACTIVA,
+      fechaFinPeriodo: vencimiento,
+    });
+    await (service as any).aprobarTransaccionAtomica(makeTx({ periodoMeses: 3 }), ProveedorPago.LIVEES);
+    expect(prisma.suscripcionOrganizacion.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ fechaFinPeriodo: new Date(2026, 8, 15) }),
+    }));
+    jest.useRealTimers();
+  });
+
+  it('renueva vencida desde hoy y no desde la fecha vencida', async () => {
+    jest.useFakeTimers().setSystemTime(new Date(2026, 5, 15, 12));
+    (prisma.suscripcionOrganizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+      estado: EstadoSuscripcion.ACTIVA,
+      fechaFinPeriodo: new Date(2026, 4, 15),
+    });
+    await (service as any).aprobarTransaccionAtomica(makeTx({ periodoMeses: 1 }), ProveedorPago.LIVEES);
+    expect(prisma.suscripcionOrganizacion.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ fechaFinPeriodo: new Date(2026, 6, 15, 12) }),
+    }));
+    jest.useRealTimers();
+  });
+
+  it('rechaza períodos mayores a un mes para proveedores recurrentes', async () => {
+    (prisma.usuario.findUnique as jest.Mock).mockResolvedValueOnce({ idUsuario: 1 });
+    (prisma.organizacion.findUnique as jest.Mock).mockResolvedValueOnce({ idOrganizacion: 10 });
+    await expect(service.crearCheckout(1, 10, TipoPlan.MAESTRO_PRO, ProveedorPago.PAYPAL, 3))
+      .rejects.toThrow(BadRequestException);
+  });
+
+  it('valida el monto esperado según el período guardado', async () => {
+    const mockProvider = (service as any).mockProvider;
+    (mockProvider.verificarWebhooks as jest.Mock).mockResolvedValueOnce(
+      makeVerificacion({ monto: 50, moneda: 'BOB' }),
+    );
+    (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(makeTx({ periodoMeses: 3 }));
+
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'EN_REVISION', idOrganizacion: 10 },
+    );
+    expect(prisma.transaccionPago.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ estado: EstadoPagoTransaccion.EN_REVISION }),
+    }));
+  });
+
+  it('no duplica avisos y no avisa planes gratuitos', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-01-01T15:00:00.000Z'));
+    const vencimiento = new Date('2026-01-08T15:00:00.000Z');
+    (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValue([
+      { idOrganizacion: 10, plan: TipoPlan.MAESTRO_PRO, estado: EstadoSuscripcion.ACTIVA, proveedor: ProveedorPago.LIVEES, autoRenovar: false, fechaFinPeriodo: vencimiento },
+      { idOrganizacion: 11, plan: TipoPlan.GRATUITO, estado: EstadoSuscripcion.ACTIVA, proveedor: ProveedorPago.LIVEES, autoRenovar: false, fechaFinPeriodo: vencimiento },
+    ]);
+    (prisma.avisoVencimiento.create as jest.Mock)
+      .mockResolvedValueOnce({ idAvisoVencimiento: 1 })
+      .mockRejectedValueOnce({ code: 'P2002' });
+    (prisma.membresia.findMany as jest.Mock).mockResolvedValue([{ usuario: { correo: 'admin@example.test', nombre: 'Ana', apellido: 'Admin' } }]);
+
+    await service.enviarAvisosVencimiento();
+    await service.enviarAvisosVencimiento();
+
+    expect(mail.enviarAvisoVencimiento).toHaveBeenCalledTimes(1);
+    expect(prisma.avisoVencimiento.create).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('envía recibo solo cuando la transición activó el plan y el fallo de correo no revierte el pago', async () => {
+    mail.enviarReciboPago.mockResolvedValue(false);
+    (prisma.membresia.findMany as jest.Mock).mockResolvedValue([{ usuario: { correo: 'admin@example.test', nombre: 'Ana', apellido: 'Admin' } }]);
+    (prisma.transaccionPago.updateMany as jest.Mock)
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    await expect((service as any).aprobarTransaccionAtomica(makeTx(), ProveedorPago.LIVEES)).resolves.toBe(true);
+    await expect((service as any).aprobarTransaccionAtomica(makeTx(), ProveedorPago.LIVEES)).resolves.toBe(false);
+    expect(mail.enviarReciboPago).toHaveBeenCalledTimes(1);
+    expect(prisma.suscripcionOrganizacion.upsert).toHaveBeenCalledTimes(1);
   });
 });
 

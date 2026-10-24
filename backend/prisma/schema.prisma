@@ -149,6 +149,7 @@ model Organizacion {
   invitaciones InvitacionOrganizacion[]
   suscripcion  SuscripcionOrganizacion?
   transacciones TransaccionPago[]
+  avisosVencimiento AvisoVencimiento[]
 
   @@map("organizacion")
 }
@@ -507,6 +508,7 @@ model TransaccionPago {
   monedaLocal          String?               @default("BOB") @map("moneda_local") @db.VarChar(10)
   estado               EstadoPagoTransaccion @default(PENDIENTE)
   plan                 TipoPlan              @default(MAESTRO_PRO)
+  periodoMeses         Int                   @default(1) @map("periodo_meses")
   proveedor            ProveedorPago         @default(MOCK_SANDBOX)
   idTransaccionExterna String?               @unique @map("id_transaccion_externa") @db.VarChar(100)
   metodoPago           String?               @map("metodo_pago") @db.VarChar(50)
@@ -519,6 +521,19 @@ model TransaccionPago {
   organizacion Organizacion            @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: Cascade, onUpdate: Cascade)
 
   @@map("transaccion_pago")
+}
+
+model AvisoVencimiento {
+  idAvisoVencimiento Int      @id @default(autoincrement()) @map("id_aviso_vencimiento")
+  idOrganizacion     Int      @map("id_organizacion")
+  fechaFinPeriodo    DateTime @map("fecha_fin_periodo")
+  diasAntes          Int      @map("dias_antes")
+  enviadoEn          DateTime @default(now()) @map("enviado_en")
+
+  organizacion Organizacion @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([idOrganizacion, fechaFinPeriodo, diasAntes], map: "uq_aviso_vencimiento")
+  @@map("aviso_vencimiento")
 }
 
 model EventoWebhook {

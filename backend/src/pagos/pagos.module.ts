@@ -6,9 +6,10 @@ import { MockPaymentProvider } from './providers/mock-payment.provider';
 import { MercadoPagoProvider } from './providers/mercadopago.provider';
 import { PayPalProvider } from './providers/paypal.provider';
 import { LiveesProvider } from './providers/livees.provider';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, MailModule],
   providers: [
     PagosService,
     MockPaymentProvider,

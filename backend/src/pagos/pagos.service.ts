@@ -14,6 +14,7 @@ import { PayPalProvider } from './providers/paypal.provider';
 import { LiveesProvider } from './providers/livees.provider';
 import { PaymentProvider, CheckoutParams } from './interfaces/payment-provider.interface';
 import { LIMITES_PREDETERMINADOS } from '../superadmin/superadmin.service';
+import { MailService } from '../mail/mail.service';
 import {
   ProveedorPago,
   TipoPlan,
@@ -21,6 +22,8 @@ import {
   EstadoPagoTransaccion,
   EstadoEventoWebhook,
   EstadoGeneral,
+  EstadoMembresia,
+  RolUsuario,
   Prisma,
 } from '@prisma/client';
 
@@ -33,6 +36,8 @@ const PRECIOS_PLANES: Record<TipoPlan, { usd: number; bob: number }> = {
 
 const TOLERANCIA_MONTO = { USD: 0.01, BOB: 0.1 } as const;
 const EVENTO_WEBHOOK_ABANDONADO_MS = Number(process.env.WEBHOOK_EVENTO_ABANDONADO_MS) || 5 * 60 * 1000;
+const PERIODOS_PERMITIDOS = [1, 3, 12] as const;
+const PROVEEDORES_RECURRENTES: ProveedorPago[] = [ProveedorPago.PAYPAL, ProveedorPago.MERCADOPAGO];
 
 @Injectable()
 export class PagosService {
@@ -45,6 +50,7 @@ export class PagosService {
     private readonly mpProvider: MercadoPagoProvider,
     private readonly paypalProvider: PayPalProvider,
     private readonly liveesProvider: LiveesProvider,
+    private readonly mailService: MailService,
   ) {
     this.providers.set(ProveedorPago.MOCK_SANDBOX, this.mockProvider);
     this.providers.set(ProveedorPago.MERCADOPAGO, this.mpProvider);
@@ -57,6 +63,24 @@ export class PagosService {
     return this.providers.get(prov) || this.mockProvider;
   }
 
+  private multiplicadorPeriodo(periodoMeses: number): number {
+    const configurado = periodoMeses === 3
+      ? Number(process.env.PAGO_MULTIPLICADOR_3_MESES || 1)
+      : periodoMeses === 12
+        ? Number(process.env.PAGO_MULTIPLICADOR_12_MESES || 1)
+        : 1;
+    return Number.isFinite(configurado) && configurado > 0 ? configurado : 1;
+  }
+
+  private preciosPeriodo(plan: TipoPlan, periodoMeses: number) {
+    const precios = PRECIOS_PLANES[plan] || PRECIOS_PLANES.MAESTRO_PRO;
+    const multiplicador = this.multiplicadorPeriodo(periodoMeses);
+    return {
+      usd: precios.usd * periodoMeses * multiplicador,
+      bob: precios.bob * periodoMeses * multiplicador,
+    };
+  }
+
   // ─────────────────────────────────────────────────────────────────
   // CREAR SESIÓN DE CHECKOUT (MOCK / MERCADOPAGO / PAYPAL)
   // ─────────────────────────────────────────────────────────────────
@@ -65,6 +89,7 @@ export class PagosService {
     idOrganizacion: number,
     planDeseado: TipoPlan,
     proveedorDeseado: ProveedorPago = ProveedorPago.MOCK_SANDBOX,
+    periodoMeses = 1,
   ) {
     if (planDeseado === TipoPlan.GRATUITO) {
       throw new BadRequestException('El Plan Gratuito no requiere pago.');
@@ -76,8 +101,14 @@ export class PagosService {
     const org = await this.prisma.organizacion.findUnique({ where: { idOrganizacion } });
     if (!org) throw new NotFoundException('Institución no encontrada.');
 
-    const precios = PRECIOS_PLANES[planDeseado] || PRECIOS_PLANES.MAESTRO_PRO;
+    if (!PERIODOS_PERMITIDOS.includes(periodoMeses as (typeof PERIODOS_PERMITIDOS)[number])) {
+      throw new BadRequestException('El período de pago debe ser 1, 3 o 12 meses.');
+    }
     const provider = this.getProvider(proveedorDeseado);
+    if (periodoMeses > 1 && PROVEEDORES_RECURRENTES.includes(provider.nombreProveedor)) {
+      throw new BadRequestException('PayPal y Mercado Pago recurrente solo permiten períodos de 1 mes.');
+    }
+    const precios = this.preciosPeriodo(planDeseado, periodoMeses);
 
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
     const params: CheckoutParams = {
@@ -111,6 +142,7 @@ export class PagosService {
         monedaLocal: 'BOB',
         estado: EstadoPagoTransaccion.PENDIENTE,
         plan: planDeseado,
+        periodoMeses,
         proveedor: provider.nombreProveedor,
         idTransaccionExterna: checkoutResult.idTransaccionExterna,
         metodoPago: checkoutResult.metodoPago,
@@ -126,6 +158,7 @@ export class PagosService {
       plan: planDeseado,
       montoLocal: precios.bob,
       monedaLocal: 'BOB',
+      periodoMeses,
     };
   }
 
@@ -352,7 +385,7 @@ export class PagosService {
       if (sub && verificacion.monto !== undefined && verificacion.estadoPago !== 'PENDIENTE') {
          // Crear transacción de renovación
          this.logger.log(`[Renovación] Creando transacción para suscripción ${sub.idSuscripcionExterna}`);
-         const precioPlan = PRECIOS_PLANES[sub.plan] || PRECIOS_PLANES.MAESTRO_PRO;
+         const precioPlan = this.preciosPeriodo(sub.plan, 1);
          tx = await this.prisma.transaccionPago.create({
             data: {
                idOrganizacion: sub.idOrganizacion,
@@ -361,6 +394,7 @@ export class PagosService {
                montoLocal: precioPlan.bob,
                monedaLocal: 'BOB',
                plan: sub.plan,   // Propagar el plan de la suscripción a la TX de renovación
+               periodoMeses: 1,
                estado: EstadoPagoTransaccion.PENDIENTE,
                proveedor: proveedorNombre,
                idTransaccionExterna: verificacion.idTransaccionExterna,
@@ -457,13 +491,14 @@ export class PagosService {
 
     if (verificacion.estadoPago === 'APROBADO') {
       const monedaWebhook = verificacion.moneda.toUpperCase();
-      const precioPlan = PRECIOS_PLANES[tx.plan as TipoPlan];
-      const montoEsperado = monedaWebhook === 'USD' ? precioPlan?.usd : monedaWebhook === 'BOB' ? precioPlan?.bob : undefined;
+      const periodoMeses = tx.periodoMeses || 1;
+      const precioPlan = this.preciosPeriodo(tx.plan as TipoPlan, periodoMeses);
+      const montoEsperado = monedaWebhook === 'USD' ? precioPlan.usd : monedaWebhook === 'BOB' ? precioPlan.bob : undefined;
       const montoRecibido = Number(verificacion.monto);
       const tolerancia = TOLERANCIA_MONTO[monedaWebhook as keyof typeof TOLERANCIA_MONTO];
 
       if (!tolerancia || montoEsperado === undefined || Math.abs(montoRecibido - montoEsperado) > tolerancia) {
-        const motivo = `Discrepancia de monto o moneda. Esperado: ${precioPlan?.usd} USD o ${precioPlan?.bob} BOB; recibido: ${montoRecibido} ${monedaWebhook}.`;
+        const motivo = `Discrepancia de monto o moneda. Esperado: ${precioPlan.usd} USD o ${precioPlan.bob} BOB para ${periodoMeses} mes(es); recibido: ${montoRecibido} ${monedaWebhook}.`;
         await this.marcarPagoEnRevision(tx, motivo);
         return { recibido: true, estado: 'EN_REVISION', idOrganizacion: tx.idOrganizacion };
       }
@@ -569,6 +604,7 @@ export class PagosService {
   // HELPERS ATÓMICOS
   // ─────────────────────────────────────────────────────────────────
   private async aprobarTransaccionAtomica(tx: any, proveedorNombre: ProveedorPago, idSuscripcionExterna?: string, idCobroRecibido?: string) {
+    let periodoCubierto: { inicio: Date; fin: Date } | undefined;
     const activada = await this.prisma.$transaction(async (db) => {
       // Solo quien mueve PENDIENTE -> APROBADO puede activar o extender el plan.
       const transicion = await db.transaccionPago.updateMany({
@@ -583,12 +619,12 @@ export class PagosService {
       const subActual = await db.suscripcionOrganizacion.findUnique({
         where: { idOrganizacion: tx.idOrganizacion },
       });
-      const fechaInicio = new Date();
-      const fechaFinPeriodo = new Date();
-      if (subActual?.estado === EstadoSuscripcion.ACTIVA && subActual.fechaFinPeriodo && subActual.fechaFinPeriodo > new Date()) {
-        fechaFinPeriodo.setTime(subActual.fechaFinPeriodo.getTime());
-      }
-      fechaFinPeriodo.setDate(fechaFinPeriodo.getDate() + 30);
+      const ahora = new Date();
+      const fechaInicio = subActual?.estado === EstadoSuscripcion.ACTIVA
+        && subActual.fechaFinPeriodo && subActual.fechaFinPeriodo > ahora
+        ? new Date(subActual.fechaFinPeriodo)
+        : ahora;
+      const fechaFinPeriodo = this.sumarMesesCalendario(fechaInicio, tx.periodoMeses || 1);
 
       const planAprobado: TipoPlan = tx.plan || TipoPlan.MAESTRO_PRO;
       const limitesPlan = LIMITES_PREDETERMINADOS[planAprobado] || LIMITES_PREDETERMINADOS.MAESTRO_PRO;
@@ -634,13 +670,51 @@ export class PagosService {
           iaHabilitada: true,
         },
       });
+      periodoCubierto = { inicio: fechaInicio, fin: fechaFinPeriodo };
       return true;
     });
 
     if (activada) {
       this.logger.log(`[Suscripción Activada] Institución ${tx.idOrganizacion} actualizada a Plan ${tx.plan || TipoPlan.MAESTRO_PRO}.`);
+      await this.enviarRecibosPago(tx, periodoCubierto!);
     }
     return activada;
+  }
+
+  private sumarMesesCalendario(fecha: Date, meses: number): Date {
+    const resultado = new Date(fecha);
+    const diaOriginal = resultado.getDate();
+    resultado.setDate(1);
+    resultado.setMonth(resultado.getMonth() + meses);
+    const ultimoDiaMes = new Date(resultado.getFullYear(), resultado.getMonth() + 1, 0).getDate();
+    resultado.setDate(Math.min(diaOriginal, ultimoDiaMes));
+    return resultado;
+  }
+
+  private async enviarRecibosPago(tx: any, periodo: { inicio: Date; fin: Date }) {
+    try {
+      const administradores = await this.prisma.membresia.findMany({
+        where: {
+          idOrganizacion: tx.idOrganizacion,
+          rol: RolUsuario.ADMIN_ORGANIZACION,
+          estado: EstadoMembresia.ACTIVO,
+        },
+        include: { usuario: true },
+      });
+      const formatoFecha = new Intl.DateTimeFormat('es-BO', { dateStyle: 'medium', timeZone: 'America/La_Paz' });
+      const periodoCubierto = `${formatoFecha.format(periodo.inicio)} - ${formatoFecha.format(periodo.fin)}`;
+      await Promise.all(administradores.map((membresia) => this.mailService.enviarReciboPago({
+        to: membresia.usuario.correo,
+        nombre: `${membresia.usuario.nombre} ${membresia.usuario.apellido}`,
+        plan: tx.plan,
+        monto: tx.montoLocal ?? tx.monto,
+        moneda: tx.monedaLocal ?? tx.moneda,
+        periodoCubierto,
+        numeroComprobante: String(tx.idTransaccion),
+      })));
+    } catch (error) {
+      this.logger.error(`[Recibo] No se pudo notificar el pago ${tx.idTransaccion}.`, error);
+    }
   }
 
   private async rechazarTransaccionAtomica(tx: any, motivoFallo?: string, idCobroRecibido?: string) {
@@ -713,6 +787,92 @@ export class PagosService {
     });
 
     return organizacion;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // TAREA PROGRAMADA: AVISOS DE VENCIMIENTO PARA PAGOS PREPAGADOS
+  // ─────────────────────────────────────────────────────────────────
+  @Cron(CronExpression.EVERY_DAY_AT_9AM, { timeZone: 'America/La_Paz' })
+  async enviarAvisosVencimiento() {
+    const suscripciones = await this.prisma.suscripcionOrganizacion.findMany({
+      where: {
+        estado: EstadoSuscripcion.ACTIVA,
+        plan: { not: TipoPlan.GRATUITO },
+        fechaFinPeriodo: { not: null },
+      },
+    });
+
+    for (const suscripcion of suscripciones) {
+      if (suscripcion.plan === TipoPlan.GRATUITO || !suscripcion.fechaFinPeriodo || this.esRenovacionRecurrente(suscripcion)) continue;
+      const diasAntes = this.diasCalendarioLaPazHasta(suscripcion.fechaFinPeriodo);
+      if (![7, 3, 1].includes(diasAntes)) continue;
+
+      try {
+        await this.prisma.avisoVencimiento.create({
+          data: {
+            idOrganizacion: suscripcion.idOrganizacion,
+            fechaFinPeriodo: suscripcion.fechaFinPeriodo,
+            diasAntes,
+          },
+        });
+      } catch (error: any) {
+        if (error?.code === 'P2002') continue;
+        this.logger.error(`[Aviso vencimiento] No se pudo reservar aviso para org ${suscripcion.idOrganizacion}.`, error);
+        continue;
+      }
+
+      let enviado = false;
+      try {
+        const administradores = await this.prisma.membresia.findMany({
+          where: {
+            idOrganizacion: suscripcion.idOrganizacion,
+            rol: RolUsuario.ADMIN_ORGANIZACION,
+            estado: EstadoMembresia.ACTIVO,
+          },
+          include: { usuario: true },
+        });
+        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3002').replace(/\/$/, '');
+        const fechaVencimiento = new Intl.DateTimeFormat('es-BO', {
+          dateStyle: 'medium', timeZone: 'America/La_Paz',
+        }).format(suscripcion.fechaFinPeriodo);
+        const resultados = await Promise.all(administradores.map((membresia) => this.mailService.enviarAvisoVencimiento({
+          to: membresia.usuario.correo,
+          nombre: `${membresia.usuario.nombre} ${membresia.usuario.apellido}`,
+          plan: suscripcion.plan,
+          diasRestantes: diasAntes,
+          fechaVencimiento,
+          enlaceRenovacion: `${frontendUrl}/docente/organizacion?tab=suscripcion`,
+        })));
+        enviado = administradores.length > 0 && resultados.every(Boolean);
+      } catch (error) {
+        this.logger.error(`[Aviso vencimiento] Falló el envío para org ${suscripcion.idOrganizacion}.`, error);
+      }
+
+      if (!enviado) {
+        await this.prisma.avisoVencimiento.deleteMany({
+          where: {
+            idOrganizacion: suscripcion.idOrganizacion,
+            fechaFinPeriodo: suscripcion.fechaFinPeriodo,
+            diasAntes,
+          },
+        });
+      }
+    }
+  }
+
+  private esRenovacionRecurrente(suscripcion: { autoRenovar: boolean; proveedor: ProveedorPago }): boolean {
+    return suscripcion.autoRenovar && PROVEEDORES_RECURRENTES.includes(suscripcion.proveedor);
+  }
+
+  private diasCalendarioLaPazHasta(fechaFinPeriodo: Date, ahora = new Date()): number {
+    const partes = (fecha: Date) => {
+      const valores = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/La_Paz', year: 'numeric', month: 'numeric', day: 'numeric',
+      }).formatToParts(fecha);
+      const valor = (tipo: string) => Number(valores.find((parte) => parte.type === tipo)?.value);
+      return Date.UTC(valor('year'), valor('month') - 1, valor('day'));
+    };
+    return Math.round((partes(fechaFinPeriodo) - partes(ahora)) / 86_400_000);
   }
 
   // ─────────────────────────────────────────────────────────────────

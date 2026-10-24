@@ -1,4 +1,4 @@
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ProveedorPago, TipoPlan } from '@prisma/client';
 
@@ -10,6 +10,11 @@ export class CrearCheckoutDto {
   @IsOptional()
   @IsEnum(ProveedorPago)
   proveedor?: ProveedorPago;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsIn([1, 3, 12])
+  periodoMeses?: number;
 }
 
 export class IdTransaccionDto {

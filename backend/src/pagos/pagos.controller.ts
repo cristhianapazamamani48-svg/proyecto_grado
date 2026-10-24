@@ -81,6 +81,7 @@ export class PagosController {
       idOrganizacion,
       plan,
       body.proveedor || ProveedorPago.MOCK_SANDBOX,
+      body.periodoMeses ?? 1,
     );
   }
 
