@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
-import { ProveedorPago, EstadoPagoTransaccion, EstadoGeneral, EstadoSuscripcion, TipoPlan } from '@prisma/client';
+import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
+import { ProveedorPago, EstadoPagoTransaccion, EstadoGeneral, EstadoSuscripcion, EstadoEventoWebhook, TipoPlan } from '@prisma/client';
 
 import { PagosService } from './pagos.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -24,6 +24,7 @@ function makeTx(overrides: Record<string, any> = {}) {
     moneda: 'USD',
     montoLocal: 50,
     monedaLocal: 'BOB',
+    plan: TipoPlan.MAESTRO_PRO,
     ...overrides,
   };
 }
@@ -54,6 +55,12 @@ async function buildModule() {
           transaccionPago: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
           suscripcionOrganizacion: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn().mockResolvedValue({ estado: 'ACTIVA' }), findFirst: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
           organizacion: { findUnique: jest.fn(), update: jest.fn() },
+          eventoWebhook: {
+            create: jest.fn().mockResolvedValue({ idEventoWebhook: 1 }),
+            findUnique: jest.fn(),
+            update: jest.fn(),
+            updateMany: jest.fn(),
+          },
           $transaction: jest.fn().mockResolvedValue([]),
         },
       },
@@ -116,14 +123,71 @@ describe('PagosService — procesarWebhook', () => {
   it('rechaza con BadRequestException si el proveedor devuelve valido:false', async () => {
     (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce({ valido: false, evento: 'rejected' });
     await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).rejects.toThrow(BadRequestException);
+    expect(prisma.eventoWebhook.create).not.toHaveBeenCalled();
+  });
+
+  it('no duplica el efecto cuando el evento ya fue procesado', async () => {
+    (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce(makeVerificacion());
+    (prisma.eventoWebhook.create as jest.Mock).mockRejectedValueOnce({ code: 'P2002' });
+    (prisma.eventoWebhook.findUnique as jest.Mock).mockResolvedValueOnce({
+      idEventoWebhook: 1,
+      estado: EstadoEventoWebhook.PROCESADO,
+    });
+
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'DUPLICADO' },
+    );
+    expect(prisma.transaccionPago.findFirst).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('procesa una sola vez dos webhooks simultáneos del mismo evento', async () => {
+    (mockProv.verificarWebhooks as jest.Mock).mockResolvedValue(makeVerificacion());
+    (prisma.eventoWebhook.create as jest.Mock)
+      .mockResolvedValueOnce({ idEventoWebhook: 1 })
+      .mockRejectedValueOnce({ code: 'P2002' });
+    (prisma.eventoWebhook.findUnique as jest.Mock).mockResolvedValueOnce({
+      idEventoWebhook: 1,
+      estado: EstadoEventoWebhook.RECIBIDO,
+    });
+    (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(makeTx());
+
+    const [primero, segundo] = await Promise.all([
+      service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {}),
+      service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {}),
+    ]);
+
+    expect([primero.estado, segundo.estado]).toEqual(expect.arrayContaining(['APROBADO', 'DUPLICADO']));
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('permite reintentar un evento que antes quedó en ERROR', async () => {
+    (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce(makeVerificacion());
+    (prisma.eventoWebhook.create as jest.Mock).mockRejectedValueOnce({ code: 'P2002' });
+    (prisma.eventoWebhook.findUnique as jest.Mock).mockResolvedValueOnce({
+      idEventoWebhook: 7,
+      estado: EstadoEventoWebhook.ERROR,
+    });
+    (prisma.eventoWebhook.updateMany as jest.Mock).mockResolvedValueOnce({ count: 1 });
+    (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(makeTx());
+
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'APROBADO', idOrganizacion: 10 },
+    );
+    expect(prisma.eventoWebhook.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ estado: EstadoEventoWebhook.RECIBIDO }),
+    }));
   });
 
   // ── Sin ID de transacción ───────────────────────────────────────────────
-  it('rechaza si idTransaccionExterna está ausente', async () => {
+  it('marca ERROR y permite reintento si falta idTransaccionExterna tras verificar la firma', async () => {
     (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce(
       makeVerificacion({ idTransaccionExterna: undefined }),
     );
-    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).rejects.toThrow(BadRequestException);
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).rejects.toThrow(ServiceUnavailableException);
+    expect(prisma.eventoWebhook.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ estado: EstadoEventoWebhook.ERROR }) }),
+    );
   });
 
   // ── TX no encontrada → 200 DESCONOCIDO ─────────────────────────────────
@@ -184,34 +248,55 @@ describe('PagosService — procesarWebhook', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  // ── Aprobación sin monto → rechaza ─────────────────────────────────────
-  it('rechaza si el proveedor aprueba sin reportar monto', async () => {
+  // ── Aprobación sin monto → revisión manual ─────────────────────────────
+  it('deja EN_REVISION si el proveedor aprueba sin reportar monto', async () => {
     (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce(
       makeVerificacion({ estadoPago: 'APROBADO', monto: undefined }),
     );
     (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(makeTx());
 
-    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).rejects.toThrow(BadRequestException);
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'EN_REVISION', idOrganizacion: 10 },
+    );
   });
 
-  // ── Aprobación sin moneda → rechaza ────────────────────────────────────
-  it('rechaza si el proveedor aprueba sin reportar moneda', async () => {
+  // ── Aprobación sin moneda → revisión manual ────────────────────────────
+  it('deja EN_REVISION si el proveedor aprueba sin reportar moneda', async () => {
     (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce(
       makeVerificacion({ estadoPago: 'APROBADO', moneda: undefined }),
     );
     (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(makeTx());
 
-    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).rejects.toThrow(BadRequestException);
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'EN_REVISION', idOrganizacion: 10 },
+    );
   });
 
   // ── Monto adulterado en BOB ─────────────────────────────────────────────
-  it('rechaza si el monto en BOB no coincide con el registrado', async () => {
+  it('deja EN_REVISION si el monto en BOB no coincide con el plan', async () => {
     (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce(
       makeVerificacion({ monto: 10, moneda: 'BOB' }),
     );
     (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(makeTx());
 
-    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).rejects.toThrow(BadRequestException);
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'EN_REVISION', idOrganizacion: 10 },
+    );
+    expect(prisma.transaccionPago.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ estado: EstadoPagoTransaccion.EN_REVISION }),
+    }));
+  });
+
+  it('deja EN_REVISION si la moneda no es USD ni BOB', async () => {
+    (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce(
+      makeVerificacion({ monto: 50, moneda: 'EUR' }),
+    );
+    (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(makeTx());
+
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'EN_REVISION', idOrganizacion: 10 },
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   // ── Monto correcto en USD (PayPal) ─────────────────────────────────────
@@ -229,7 +314,7 @@ describe('PagosService — procesarWebhook', () => {
   });
 
   // ── Monto adulterado en USD (PayPal) ───────────────────────────────────
-  it('rechaza si el monto en USD no coincide con tx.monto', async () => {
+  it('deja EN_REVISION si el monto en USD no coincide con el plan', async () => {
     (ppProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce(
       makeVerificacion({ monto: 1.00, moneda: 'USD', idTransaccionExterna: 'tx_123' }),
     );
@@ -237,7 +322,9 @@ describe('PagosService — procesarWebhook', () => {
       makeTx({ proveedor: ProveedorPago.PAYPAL }),
     );
 
-    await expect(service.procesarWebhook(ProveedorPago.PAYPAL, {}, {})).rejects.toThrow(BadRequestException);
+    await expect(service.procesarWebhook(ProveedorPago.PAYPAL, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'EN_REVISION', idOrganizacion: 10 },
+    );
   });
 
   // ── Atomicidad: todo en una sola $transaction ───────────────────────────

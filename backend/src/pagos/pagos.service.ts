@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +19,7 @@ import {
   TipoPlan,
   EstadoSuscripcion,
   EstadoPagoTransaccion,
+  EstadoEventoWebhook,
   EstadoGeneral,
   Prisma,
 } from '@prisma/client';
@@ -28,6 +30,8 @@ const PRECIOS_PLANES: Record<TipoPlan, { usd: number; bob: number }> = {
   BASICO: { usd: 29, bob: 200 },
   INSTITUCIONAL: { usd: 99, bob: 690 },
 };
+
+const TOLERANCIA_MONTO = { USD: 0.01, BOB: 0.1 } as const;
 
 @Injectable()
 export class PagosService {
@@ -174,6 +178,87 @@ export class PagosService {
       throw new BadRequestException('Firma de webhook no válida o ausente.');
     }
 
+    const idEventoExterno = this.obtenerIdEventoExterno(proveedorNombre, body, verificacion);
+    const evento = await this.registrarOReclamarEvento(
+      proveedorNombre,
+      idEventoExterno,
+      verificacion.evento,
+      body,
+    );
+
+    if (!evento.procesar) {
+      return { recibido: true, estado: 'DUPLICADO' };
+    }
+
+    try {
+      const resultado = await this.procesarWebhookVerificado(proveedorNombre, verificacion);
+      await this.prisma.eventoWebhook.update({
+        where: { idEventoWebhook: evento.idEventoWebhook },
+        data: {
+          estado: resultado.estado === 'DESCONOCIDO' ? EstadoEventoWebhook.IGNORADO : EstadoEventoWebhook.PROCESADO,
+          procesadoEn: new Date(),
+          error: null,
+        },
+      });
+      return resultado;
+    } catch (error: any) {
+      const mensaje = error?.message || 'Error inesperado al procesar el webhook.';
+      await this.prisma.eventoWebhook.update({
+        where: { idEventoWebhook: evento.idEventoWebhook },
+        data: { estado: EstadoEventoWebhook.ERROR, error: mensaje.slice(0, 2000) },
+      });
+      this.logger.error(`[Webhook ${proveedorNombre}] Evento ${idEventoExterno} falló.`, error);
+      throw new ServiceUnavailableException(
+        'No se pudo procesar el webhook. El proveedor puede reintentarlo.',
+      );
+    }
+  }
+
+  private obtenerIdEventoExterno(proveedor: ProveedorPago, body: any, verificacion: any): string {
+    // PayPal usa body.id; Mercado Pago body.data.id; Livees puede usar event_id o id.
+    // Si no existe ID nativo, la clave se deriva sin tiempo para permanecer idempotente.
+    const idNativo = proveedor === ProveedorPago.PAYPAL
+      ? body?.id
+      : proveedor === ProveedorPago.MERCADOPAGO
+        ? body?.data?.id || body?.id
+        : proveedor === ProveedorPago.LIVEES
+          ? body?.event_id || body?.data?.event_id || body?.transaction_id || body?.data?.id || body?.id
+          : body?.idEventoExterno || body?.event_id;
+    const idDerivado = `${verificacion.idTransaccionExterna || verificacion.idSuscripcionExterna || 'sin-id'}:${verificacion.evento || 'evento'}:${verificacion.estadoPago || 'PENDIENTE'}`;
+    return String(idNativo || idDerivado).slice(0, 150);
+  }
+
+  private async registrarOReclamarEvento(
+    proveedor: ProveedorPago,
+    idEventoExterno: string,
+    tipo: string,
+    payload: any,
+  ): Promise<{ idEventoWebhook: number; procesar: boolean }> {
+    try {
+      const evento = await this.prisma.eventoWebhook.create({
+        data: { proveedor, idEventoExterno, tipo, payload: payload ?? {}, estado: EstadoEventoWebhook.RECIBIDO },
+      });
+      return { idEventoWebhook: evento.idEventoWebhook, procesar: true };
+    } catch (error: any) {
+      if (error?.code !== 'P2002') throw error;
+
+      const existente = await this.prisma.eventoWebhook.findUnique({
+        where: { proveedor_idEventoExterno: { proveedor, idEventoExterno } },
+      });
+      if (!existente || existente.estado !== EstadoEventoWebhook.ERROR) {
+        return { idEventoWebhook: existente?.idEventoWebhook || 0, procesar: false };
+      }
+
+      const reclamo = await this.prisma.eventoWebhook.updateMany({
+        where: { idEventoWebhook: existente.idEventoWebhook, estado: EstadoEventoWebhook.ERROR },
+        data: { estado: EstadoEventoWebhook.RECIBIDO, error: null, procesadoEn: null },
+      });
+      return { idEventoWebhook: existente.idEventoWebhook, procesar: reclamo.count === 1 };
+    }
+  }
+
+  private async procesarWebhookVerificado(proveedorNombre: ProveedorPago, verificacion: any) {
+
     this.logger.log(
       `[Webhook ${proveedorNombre}] Evento: ${verificacion.evento}, TX: ${verificacion.idTransaccionExterna}`,
     );
@@ -244,12 +329,13 @@ export class PagosService {
       if (sub && verificacion.monto !== undefined && verificacion.estadoPago !== 'PENDIENTE') {
          // Crear transacción de renovación
          this.logger.log(`[Renovación] Creando transacción para suscripción ${sub.idSuscripcionExterna}`);
+         const precioPlan = PRECIOS_PLANES[sub.plan] || PRECIOS_PLANES.MAESTRO_PRO;
          tx = await this.prisma.transaccionPago.create({
             data: {
                idOrganizacion: sub.idOrganizacion,
-               monto: verificacion.moneda === 'USD' ? verificacion.monto : (sub.monto || 0),
+               monto: precioPlan.usd,
                moneda: 'USD',
-               montoLocal: verificacion.moneda !== 'USD' ? verificacion.monto : (sub.montoLocal || 0),
+               montoLocal: precioPlan.bob,
                monedaLocal: 'BOB',
                plan: sub.plan,   // Propagar el plan de la suscripción a la TX de renovación
                estado: EstadoPagoTransaccion.PENDIENTE,
@@ -337,33 +423,26 @@ export class PagosService {
     }
 
     // ── Validaciones de monto y moneda ───────────────────────────────
-    // Para una aprobación, monto Y moneda son OBLIGATORIOS — nunca se asumen.
+    // Para una aprobación, monto y moneda son obligatorios. La tolerancia
+    // cubre redondeo del proveedor: 0.01 USD o 0.10 BOB, sin conversión implícita.
     if (verificacion.estadoPago === 'APROBADO') {
       if (verificacion.monto === undefined || verificacion.monto === null || !verificacion.moneda) {
-        this.logger.error(
-          `[Webhook ${proveedorNombre}] Aprobación sin monto o moneda para TX ${tx.idTransaccionExterna}. Rechazando.`,
-        );
-        throw new BadRequestException(
-          'El proveedor aprobó el pago sin reportar monto o moneda. No se puede activar la suscripción.',
-        );
+        await this.marcarPagoEnRevision(tx, 'Aprobación sin monto o moneda verificables.');
+        return { recibido: true, estado: 'EN_REVISION', idOrganizacion: tx.idOrganizacion };
       }
     }
 
-    // Comparación de monto con conciencia de moneda
-    if (verificacion.monto !== undefined && verificacion.monto !== null && verificacion.moneda) {
+    if (verificacion.estadoPago === 'APROBADO') {
       const monedaWebhook = verificacion.moneda.toUpperCase();
-      // PayPal reporta USD; MercadoPago y Mock reportan moneda local (BOB).
-      const montoEsperado = monedaWebhook === 'USD'
-        ? Number(tx.monto) || 0
-        : Number(tx.montoLocal) || 0;
+      const precioPlan = PRECIOS_PLANES[tx.plan as TipoPlan];
+      const montoEsperado = monedaWebhook === 'USD' ? precioPlan?.usd : monedaWebhook === 'BOB' ? precioPlan?.bob : undefined;
       const montoRecibido = Number(verificacion.monto);
+      const tolerancia = TOLERANCIA_MONTO[monedaWebhook as keyof typeof TOLERANCIA_MONTO];
 
-      if (montoEsperado === 0 || Math.abs(montoRecibido - montoEsperado) > 0.1) {
-        this.logger.error(
-          `Discrepancia de monto para TX ${tx.idTransaccionExterna}. ` +
-          `Moneda: ${monedaWebhook}. Esperado: ${montoEsperado}, Recibido: ${montoRecibido}`,
-        );
-        throw new BadRequestException('Monto del webhook no coincide con el monto esperado.');
+      if (!tolerancia || montoEsperado === undefined || Math.abs(montoRecibido - montoEsperado) > tolerancia) {
+        const motivo = `Discrepancia de monto o moneda. Esperado: ${precioPlan?.usd} USD o ${precioPlan?.bob} BOB; recibido: ${montoRecibido} ${monedaWebhook}.`;
+        await this.marcarPagoEnRevision(tx, motivo);
+        return { recibido: true, estado: 'EN_REVISION', idOrganizacion: tx.idOrganizacion };
       }
     }
 
@@ -384,6 +463,14 @@ export class PagosService {
     }
 
     return { recibido: true, estado: verificacion.estadoPago, idOrganizacion: tx.idOrganizacion };
+  }
+
+  private async marcarPagoEnRevision(tx: any, motivo: string) {
+    this.logger.warn(`[Webhook en revisión] TX ${tx.idTransaccion}, organización ${tx.idOrganizacion}. ${motivo}`);
+    await this.prisma.transaccionPago.update({
+      where: { idTransaccion: tx.idTransaccion },
+      data: { estado: EstadoPagoTransaccion.EN_REVISION, detalleError: motivo.slice(0, 2000) },
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────

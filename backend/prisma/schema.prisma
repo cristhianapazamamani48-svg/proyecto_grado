@@ -41,6 +41,14 @@ enum EstadoPagoTransaccion {
   APROBADO
   RECHAZADO
   REEMBOLSADO
+  EN_REVISION
+}
+
+enum EstadoEventoWebhook {
+  RECIBIDO
+  PROCESADO
+  ERROR
+  IGNORADO
 }
 
 enum EstadoGeneral {
@@ -511,4 +519,20 @@ model TransaccionPago {
   organizacion Organizacion            @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: Cascade, onUpdate: Cascade)
 
   @@map("transaccion_pago")
+}
+
+model EventoWebhook {
+  idEventoWebhook  Int                 @id @default(autoincrement()) @map("id_evento_webhook")
+  proveedor        ProveedorPago
+  idEventoExterno  String              @map("id_evento_externo") @db.VarChar(150)
+  tipo             String              @db.VarChar(100)
+  payload          Json
+  estado           EstadoEventoWebhook @default(RECIBIDO)
+  error            String?             @db.Text
+  creadoEn         DateTime            @default(now()) @map("creado_en")
+  procesadoEn      DateTime?           @map("procesado_en")
+
+  @@unique([proveedor, idEventoExterno], map: "uq_evento_webhook_proveedor_externo")
+  @@index([estado], map: "idx_evento_webhook_estado")
+  @@map("evento_webhook")
 }

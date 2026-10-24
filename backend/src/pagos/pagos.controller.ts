@@ -14,6 +14,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { PagosService } from './pagos.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TipoPlan, ProveedorPago, RolUsuario } from '@prisma/client';
+import { CrearCheckoutDto, IdTransaccionDto, IdTransaccionExternaDto } from './dto/pagos.dto';
 
 @Controller('pagos')
 export class PagosController {
@@ -68,7 +69,7 @@ export class PagosController {
   @UseGuards(AuthGuard('jwt'))
   async crearCheckout(
     @Request() req: any,
-    @Body() body: { plan?: TipoPlan; proveedor?: ProveedorPago },
+    @Body() body: CrearCheckoutDto,
   ) {
     const idUsuario = this.requiereUsuario(req);
     const idOrganizacion = await this.obtenerIdOrganizacionUsuario(idUsuario);
@@ -85,20 +86,20 @@ export class PagosController {
 
   @Post('sandbox/:idTransaccion/aprobar')
   @UseGuards(AuthGuard('jwt'))
-  async aprobarPagoSandbox(@Request() req: any, @Param('idTransaccion') idTransaccion: string) {
+  async aprobarPagoSandbox(@Request() req: any, @Param() params: IdTransaccionDto) {
     const idUsuario = this.requiereUsuario(req);
     const idOrganizacion = await this.obtenerIdOrganizacionUsuario(idUsuario);
     await this.verificarEsAdmin(idUsuario, idOrganizacion);
-    return this.pagosService.aprobarPagoSandbox(idOrganizacion, Number(idTransaccion));
+    return this.pagosService.aprobarPagoSandbox(idOrganizacion, params.idTransaccion);
   }
 
   @Post('paypal/:idTransaccionExterna/capturar')
   @UseGuards(AuthGuard('jwt'))
-  async capturarPagoPayPal(@Request() req: any, @Param('idTransaccionExterna') idTransaccionExterna: string) {
+  async capturarPagoPayPal(@Request() req: any, @Param() params: IdTransaccionExternaDto) {
     const idUsuario = this.requiereUsuario(req);
     const idOrganizacion = await this.obtenerIdOrganizacionUsuario(idUsuario);
     await this.verificarEsAdmin(idUsuario, idOrganizacion);
-    return this.pagosService.capturarPagoPayPal(idOrganizacion, idTransaccionExterna);
+    return this.pagosService.capturarPagoPayPal(idOrganizacion, params.idTransaccionExterna);
   }
 
   @Post('webhook/:proveedor')
