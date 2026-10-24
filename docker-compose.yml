@@ -1,4 +1,4 @@
-services:
+﻿services:
   postgres:
     image: postgres:16-alpine
     container_name: uub_postgres
@@ -24,8 +24,6 @@ services:
       - "3001:3001"
     environment:
       DATABASE_URL: "postgresql://postgres:postgrespassword@postgres:5432/uub_evaluaciones?schema=public"
-      # El JWT_SECRET NO se define aquí a propósito: el servicio toma su valor
-      # desde ./backend/.env (env_file) y el backend falla al arrancar si falta.
       PORT: 3001
       CORS_ORIGIN: "http://localhost:3002"
       AI_PROVIDER: "mock"
@@ -41,8 +39,11 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: "/api"
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
     container_name: uub_frontend
     restart: always
+    environment:
+      BACKEND_INTERNAL_URL: "http://backend:3001"
     ports:
       - "3002:3000"
     depends_on:

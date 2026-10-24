@@ -29,7 +29,7 @@ const TIPO_EVENTO_LABEL: Record<string, { label: string; icon: string }> = {
 
 const ESTADO_IA_BADGE: Record<string, { label: string; color: string }> = {
   PENDIENTE: { label: 'Pendiente de IA', color: 'bg-slate-100 text-slate-600 border-slate-200' },
-  SUGERIDA: { label: '🤖 IA Sugerida', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  SUGERIDA: { label: '🤖 IA Sugerida', color: 'bg-blue-50 text-blue-700 border-blue-200' },
   ACEPTADA: { label: '✓ IA Aceptada', color: 'bg-green-50 text-green-700 border-green-200' },
   MODIFICADA: { label: '✎ Modificada por Docente', color: 'bg-blue-50 text-blue-700 border-blue-200' },
   RECHAZADA: { label: '✕ IA Rechazada', color: 'bg-red-50 text-red-700 border-red-200' },
@@ -600,24 +600,24 @@ export default function ReporteSesionPage() {
 
                     {/* Tarjeta de Análisis de IA (Si existe o botón para solicitar) */}
                     {item.puntajeSugeridoIa !== null ? (
-                      <div className="bg-purple-50/70 border border-purple-200 rounded-2xl p-5 space-y-4">
+                      <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-5 space-y-4">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="text-lg">🤖</span>
-                            <span className="font-bold text-purple-900 text-sm">Sugerencia de Inteligencia Artificial</span>
+                            <span className="font-bold text-blue-900 text-sm">Sugerencia de Inteligencia Artificial</span>
                             {item.confianzaIa && (
-                              <span className="text-[11px] font-bold text-purple-700 bg-purple-100 border border-purple-300 px-2.5 py-0.5 rounded-full">
+                              <span className="text-[11px] font-bold text-blue-700 bg-blue-100 border border-blue-300 px-2.5 py-0.5 rounded-full">
                                 Confianza: {Math.round(item.confianzaIa * 100)}%
                               </span>
                             )}
                           </div>
-                          <span className="text-lg font-black text-purple-900">
+                          <span className="text-lg font-black text-blue-900">
                             {item.puntajeSugeridoIa} / {item.puntajeMaximo} pts
                           </span>
                         </div>
 
                         {item.justificacionIa && (
-                          <p className="text-xs text-purple-800 leading-relaxed">
+                          <p className="text-xs text-blue-800 leading-relaxed">
                             <strong>Justificación:</strong> {item.justificacionIa}
                           </p>
                         )}
@@ -648,7 +648,7 @@ export default function ReporteSesionPage() {
                         </div>
 
                         {item.comentarioIa && (
-                          <div className="text-xs text-purple-900 bg-white/60 p-3 rounded-xl border border-purple-200">
+                          <div className="text-xs text-blue-900 bg-white/60 p-3 rounded-xl border border-blue-200">
                             <strong>Retroalimentación sugerida:</strong> {item.comentarioIa}
                           </div>
                         )}
@@ -677,7 +677,7 @@ export default function ReporteSesionPage() {
                             type="button"
                             disabled={form.analizandoIa}
                             onClick={() => handleAnalizarIA(item.idRespuesta)}
-                            className="px-3 py-2 text-purple-700 hover:bg-purple-100 font-bold text-xs rounded-xl transition-colors disabled:opacity-40 ml-auto"
+                            className="px-3 py-2 text-blue-700 hover:bg-blue-100 font-bold text-xs rounded-xl transition-colors disabled:opacity-40 ml-auto"
                           >
                             {form.analizandoIa ? 'Re-analizando...' : '↻ Volver a analizar'}
                           </button>
@@ -693,7 +693,7 @@ export default function ReporteSesionPage() {
                           type="button"
                           disabled={form.analizandoIa}
                           onClick={() => handleAnalizarIA(item.idRespuesta)}
-                          className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-md shadow-purple-500/20 transition-colors disabled:opacity-40"
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/20 transition-colors disabled:opacity-40"
                         >
                           {form.analizandoIa ? 'Analizando con IA...' : '🤖 Analizar con IA'}
                         </button>

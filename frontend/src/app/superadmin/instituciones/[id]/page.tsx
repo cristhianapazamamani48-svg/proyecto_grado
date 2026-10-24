@@ -456,7 +456,7 @@ export default function SuperadminInstitucionDetallePage({ params }: { params: P
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
               <div>
                 <p className="text-xs font-bold text-slate-400 uppercase">Correcciones Consumidas</p>
-                <p className="text-2xl font-black text-indigo-600 mt-1">
+                <p className="text-2xl font-black text-blue-600 mt-1">
                   {inst?.usoIa?.usadas || 0} / <span className="text-slate-400">{inst?.usoIa?.limite}</span>
                 </p>
               </div>

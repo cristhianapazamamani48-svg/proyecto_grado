@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, ForbiddenException, BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -145,7 +145,11 @@ export class AuthService {
     }
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
-    let payload: any = null;
+    if (!clientId) {
+      throw new ServiceUnavailableException('El inicio de sesión con Google no está configurado.');
+    }
+
+    let payload: any;
 
     try {
       const { OAuth2Client } = await import('google-auth-library');
@@ -157,18 +161,8 @@ export class AuthService {
       });
 
       payload = ticket.getPayload();
-    } catch (err: any) {
-      if (process.env.NODE_ENV !== 'production' && idToken.startsWith('mock_google_')) {
-        const emailMock = idToken.replace('mock_google_', '');
-        payload = {
-          email: emailMock,
-          given_name: 'Docente',
-          family_name: 'Google',
-          name: 'Docente Google',
-        };
-      } else {
-        throw new UnauthorizedException('Token de Google inválido o expirado.');
-      }
+    } catch {
+      throw new UnauthorizedException('Token de Google inválido o expirado.');
     }
 
     if (!payload?.email) {

@@ -271,7 +271,7 @@ export default function SuperadminInstitucionesPage() {
                         {inst.totalEvaluaciones} / <span className="text-slate-400">{inst.limiteEvaluaciones}</span>
                       </td>
                       <td className="p-4">
-                        <span className="font-bold text-indigo-600">{inst.usoIaMes}</span>
+                        <span className="font-bold text-blue-600">{inst.usoIaMes}</span>
                         <span className="text-xs text-slate-400"> / {inst.limiteCorreccionesIaMes}</span>
                       </td>
                       <td className="p-4">

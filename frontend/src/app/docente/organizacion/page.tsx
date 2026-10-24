@@ -22,7 +22,7 @@ export default function DocenteOrganizacionPage() {
   const [aprobandoPagoSandbox, setAprobandoPagoSandbox] = useState(false);
   const [pagoSandboxPendiente, setPagoSandboxPendiente] = useState<{ idTransaccion: number; montoLocal: number; monedaLocal: string } | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
-  const [tab, setTab] = useState<'resumen' | 'miembros' | 'invitaciones' | 'codigo' | 'ia' | 'suscripcion'>('resumen');
+  const [tab, setTab] = useState<'resumen' | 'miembros' | 'invitaciones' | 'codigo' | 'ia' | 'suscripcion'>('suscripcion');
 
   // Formularios
   const [correoInvitar, setCorreoInvitar] = useState('');
@@ -355,7 +355,7 @@ export default function DocenteOrganizacionPage() {
   if (cargando) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
       </div>
     );
   }
@@ -371,13 +371,16 @@ export default function DocenteOrganizacionPage() {
             </Link>
             <span className="text-slate-300">|</span>
             <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-              🏢 {org?.nombre || 'Mi Organización'}
-              <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-indigo-100 text-indigo-700 uppercase">
+              💎 Mi Plan Docente & Suscripción
+              <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-blue-50 text-blue-700 border border-blue-200 uppercase">
                 Plan {org?.plan || 'GRATUITO'}
               </span>
             </h1>
           </div>
           <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-500 hidden sm:inline">
+              Cuenta: <strong>{org?.nombre || 'Mi Espacio Personal'}</strong>
+            </span>
             <Link
               href="/docente/dashboard"
               className="px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 text-sm font-medium rounded-lg transition"
@@ -408,22 +411,19 @@ export default function DocenteOrganizacionPage() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-        {/* Sub-Navegación por Tabs */}
+        {/* Sub-Navegación por Tabs Individuales */}
         <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
           {[
-            { id: 'resumen', label: '📊 Resumen & Límites' },
-            { id: 'suscripcion', label: '💳 Suscripción y Pagos' },
-            { id: 'miembros', label: `👥 Miembros (${miembros.length})` },
-            { id: 'invitaciones', label: `✉️ Invitaciones (${invitaciones.filter(i => i.estado === 'PENDIENTE').length})` },
-            { id: 'codigo', label: '🔑 Código de Organización' },
-            { id: 'ia', label: '🤖 Consumo de IA' },
+            { id: 'suscripcion', label: '💎 Mi Plan & Suscripción Pro' },
+            { id: 'resumen', label: '📊 Mis Límites y Cuotas' },
+            { id: 'ia', label: '🤖 Consumo de Créditos IA' },
           ].map((item) => (
             <button
               key={item.id}
               onClick={() => setTab(item.id as any)}
-              className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
+              className={`px-4 py-2 text-sm font-semibold rounded-lg transition cursor-pointer ${
                 tab === item.id
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-blue-600 text-white shadow-sm'
                   : 'text-slate-600 hover:bg-slate-100'
               }`}
             >
@@ -490,7 +490,7 @@ export default function DocenteOrganizacionPage() {
                   )}
                 </div>
                 {suscripcion?.plan !== 'MAESTRO_PRO' || suscripcion?.estadoSuscripcion === 'CANCELADA' || suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA' ? (
-                  <div className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white p-5 rounded-2xl shadow-lg min-w-[220px] text-center">
+                  <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white p-5 rounded-2xl shadow-lg shadow-blue-600/20 min-w-[220px] text-center">
                     <p className="text-xs font-bold uppercase tracking-widest opacity-80">Plan Maestro Pro</p>
                     <p className="text-3xl font-extrabold mt-1">Bs 50<span className="text-sm font-normal opacity-80"> / mes</span></p>
                     <p className="text-xs opacity-75 mt-0.5">≈ $7.25 USD · Pago mensual</p>
@@ -518,7 +518,7 @@ export default function DocenteOrganizacionPage() {
                 </p>
                 <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
                   <div
-                    className="bg-indigo-500 h-full rounded-full"
+                    className="bg-blue-600 h-full rounded-full"
                     style={{
                       width: `${suscripcion?.limites?.evaluacionesLimite >= 99999
                         ? 0
@@ -529,7 +529,7 @@ export default function DocenteOrganizacionPage() {
               </div>
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                 <p className="text-xs font-semibold uppercase text-slate-400">Créditos IA (mes)</p>
-                <p className="text-2xl font-extrabold text-indigo-700 mt-1">
+                <p className="text-2xl font-extrabold text-blue-600 mt-1">
                   {suscripcion?.limites?.iaUsadasMes ?? 0}
                   <span className="text-base font-normal text-slate-400">
                     {' '}/ {suscripcion?.limites?.iaLimiteMes >= 99999 ? '∞' : suscripcion?.limites?.iaLimiteMes ?? 10}
@@ -537,7 +537,7 @@ export default function DocenteOrganizacionPage() {
                 </p>
                 <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
                   <div
-                    className="bg-indigo-500 h-full rounded-full"
+                    className="bg-blue-600 h-full rounded-full"
                     style={{
                       width: `${suscripcion?.limites?.iaLimiteMes >= 99999
                         ? 0
@@ -559,14 +559,14 @@ export default function DocenteOrganizacionPage() {
 
             {/* Panel de upgrade o gestión */}
             {(suscripcion?.plan !== 'MAESTRO_PRO' || suscripcion?.estadoSuscripcion === 'CANCELADA' || suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA') && (
-              <div className="bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-200 p-6 rounded-2xl space-y-4">
+              <div className="bg-gradient-to-r from-blue-50/50 to-white border border-blue-200 p-6 rounded-2xl space-y-4">
                 <div>
-                  <h3 className="text-lg font-bold text-indigo-900">Actualizar al Plan Maestro Pro</h3>
-                  <p className="text-sm text-indigo-700 mt-1">
+                  <h3 className="text-lg font-bold text-slate-900">Actualizar al Plan Maestro Pro</h3>
+                  <p className="text-sm text-slate-600 mt-1">
                     Acceso ilimitado a evaluaciones, créditos de IA, contenido privado y más funciones avanzadas por un pago de <strong>Bs 50 al mes</strong>.
                   </p>
                 </div>
-                <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-indigo-800">
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-700">
                   {[
                     'Almacenamiento ilimitado de evaluaciones',
                     'Créditos de IA ilimitados por mes',
@@ -578,16 +578,16 @@ export default function DocenteOrganizacionPage() {
                     'Soporte prioritario',
                   ].map((f) => (
                     <li key={f} className="flex items-center gap-2">
-                      <span className="text-indigo-500 font-bold">✓</span> {f}
+                      <span className="text-blue-600 font-bold">✓</span> {f}
                     </li>
                   ))}
                 </ul>
 
                 {checkoutUrl && (
-                  <div className="p-4 bg-white border border-indigo-300 rounded-xl">
-                    <p className="text-sm font-semibold text-indigo-800 mb-2">Enlace de pago generado:</p>
+                  <div className="p-4 bg-white border border-blue-200 rounded-xl">
+                    <p className="text-sm font-semibold text-blue-900 mb-2">Enlace de pago generado:</p>
                     <a href={checkoutUrl} target="_blank" rel="noopener noreferrer"
-                      className="block text-xs font-mono text-indigo-600 underline break-all">
+                      className="block text-xs font-mono text-blue-600 underline break-all">
                       {checkoutUrl}
                     </a>
                   </div>
@@ -624,7 +624,7 @@ export default function DocenteOrganizacionPage() {
                     🧪 Sandbox Demo
                   </button>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 bg-white/70 p-3 rounded-xl border border-indigo-100">
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 bg-white/70 p-3 rounded-xl border border-slate-200">
                   <strong className="text-slate-700">Medios admitidos en Bolivia:</strong>
                   <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded font-medium">QR Simple</span>
                   <span className="bg-purple-50 text-purple-800 px-2 py-0.5 rounded font-medium">Yape (BCP)</span>
@@ -756,7 +756,7 @@ export default function DocenteOrganizacionPage() {
 
               <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                 <p className="text-xs font-semibold uppercase text-slate-400">Correcciones IA Mes</p>
-                <p className="text-3xl font-extrabold text-indigo-600 mt-2">
+                <p className="text-3xl font-extrabold text-blue-600 mt-2">
                   {usoIa?.usadas || 0} / <span className="text-slate-400">{usoIa?.limite || 50}</span>
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
@@ -781,13 +781,13 @@ export default function DocenteOrganizacionPage() {
                   <h3 className="text-base font-bold text-slate-800">Consumo de Créditos de IA (Mes Actual)</h3>
                   <p className="text-xs text-slate-500">Solo cuentan las evaluaciones procesadas exitosamente.</p>
                 </div>
-                <span className="text-sm font-bold text-indigo-600">
+                <span className="text-sm font-bold text-blue-600">
                   {usoIa?.porcentajeUsado || 0}% consumido
                 </span>
               </div>
               <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
                 <div
-                  className="bg-indigo-600 h-full transition-all duration-500"
+                  className="bg-blue-600 h-full transition-all duration-500"
                   style={{ width: `${Math.min(100, usoIa?.porcentajeUsado || 0)}%` }}
                 ></div>
               </div>
@@ -883,7 +883,7 @@ export default function DocenteOrganizacionPage() {
                     placeholder="docente@universidad.edu"
                     value={correoInvitar}
                     onChange={(e) => setCorreoInvitar(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   />
                 </div>
                 <div className="w-48">
@@ -891,7 +891,7 @@ export default function DocenteOrganizacionPage() {
                   <select
                     value={rolInvitar}
                     onChange={(e) => setRolInvitar(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   >
                     <option value="DOCENTE">Docente</option>
                     <option value="ADMIN_ORGANIZACION">Admin de Organización</option>
@@ -899,19 +899,19 @@ export default function DocenteOrganizacionPage() {
                 </div>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-sm transition"
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-lg shadow-sm shadow-blue-600/20 transition cursor-pointer"
                 >
                   Generar Invitación
                 </button>
               </form>
 
               {invitacionCreada && (
-                <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl space-y-2 text-sm">
-                  <p className="font-bold text-indigo-900">Enlace de Invitación Generado:</p>
-                  <div className="p-2 bg-white rounded border border-indigo-200 font-mono text-xs text-indigo-800 select-all">
+                <div className="p-4 bg-blue-50/50 border border-blue-200 rounded-xl space-y-2 text-sm">
+                  <p className="font-bold text-blue-950">Enlace de Invitación Generado:</p>
+                  <div className="p-2 bg-white rounded border border-blue-200 font-mono text-xs text-blue-900 select-all">
                     {window.location.origin}/unirse?token={invitacionCreada.token}
                   </div>
-                  <p className="text-xs text-indigo-700">
+                  <p className="text-xs text-blue-700">
                     Expira el: {new Date(invitacionCreada.fechaExpiracion).toLocaleString()}
                   </p>
                 </div>
@@ -958,7 +958,7 @@ export default function DocenteOrganizacionPage() {
                         {inv.estado === 'PENDIENTE' && (
                           <button
                             onClick={() => handleRevocarInvitacion(inv.idInvitacion)}
-                            className="px-3 py-1 bg-red-50 text-red-600 hover:bg-red-100 rounded text-xs font-semibold transition"
+                            className="px-3 py-1 bg-red-50 text-red-600 hover:bg-red-100 rounded text-xs font-semibold transition cursor-pointer"
                           >
                             Revocar
                           </button>
@@ -985,13 +985,13 @@ export default function DocenteOrganizacionPage() {
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase text-slate-400">Código Actual</p>
-                <p className="text-2xl font-mono font-bold text-indigo-600 tracking-wider">
+                <p className="text-2xl font-mono font-bold text-blue-600 tracking-wider">
                   {org?.codigoAcceso || 'SIN CÓDIGO GENERADO'}
                 </p>
               </div>
               <button
                 onClick={handleGenerarCodigo}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg transition"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-lg shadow-sm shadow-blue-600/20 transition cursor-pointer"
               >
                 {org?.codigoAcceso ? 'Regenerar Código' : 'Generar Código'}
               </button>
@@ -1003,7 +1003,7 @@ export default function DocenteOrganizacionPage() {
                   type="checkbox"
                   checked={codigoActivo}
                   onChange={(e) => setCodigoActivo(e.target.checked)}
-                  className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                  className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
                 />
                 <div>
                   <span className="text-sm font-bold text-slate-800">Activar ingreso por código</span>
@@ -1016,7 +1016,7 @@ export default function DocenteOrganizacionPage() {
                   type="checkbox"
                   checked={aprobacionRequerida}
                   onChange={(e) => setAprobacionRequerida(e.target.checked)}
-                  className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                  className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
                 />
                 <div>
                   <span className="text-sm font-bold text-slate-800">Requerir aprobación de administrador</span>
@@ -1044,7 +1044,7 @@ export default function DocenteOrganizacionPage() {
                 <h3 className="text-lg font-bold text-slate-800">Dashboard de Consumo de IA</h3>
                 <p className="text-xs text-slate-500">Detalle del consumo mensual por la organización.</p>
               </div>
-              <span className="px-3 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-full">
+              <span className="px-3 py-1 bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold rounded-full">
                 {usoIa?.plan || 'GRATUITO'}
               </span>
             </div>

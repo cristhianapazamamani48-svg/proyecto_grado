@@ -1161,7 +1161,7 @@ export class SesionesService {
         where: { idRespuesta },
         data: {
           puntaje: puntajeAsignado,
-          comentarioIa: comentarioDocente,
+          comentarioDocente,
           estadoRevisionIa: EstadoRevisionIa.MODIFICADA,
           corregidoDocente: true,
           idUsuarioCorrector: idUsuarioDocente,

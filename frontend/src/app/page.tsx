@@ -24,7 +24,7 @@ export default function Home() {
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 min-h-0">
 
         {/* Left — Hero */}
-        <div className="flex flex-col justify-center px-10 py-8 bg-gradient-to-br from-blue-600 to-indigo-600 text-white order-2 md:order-1">
+        <div className="flex flex-col justify-center px-10 py-8 bg-gradient-to-br from-blue-600 to-blue-700 text-white order-2 md:order-1">
           <div className="max-w-md">
             <span className="inline-block mb-4 px-3 py-1 bg-white/15 text-white text-xs font-semibold rounded-full uppercase tracking-widest">
               Sistema de Evaluaciones

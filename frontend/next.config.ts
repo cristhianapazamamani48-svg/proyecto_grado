@@ -1,4 +1,6 @@
-import type { NextConfig } from "next";
+﻿import type { NextConfig } from "next";
+
+const backendUrl = process.env.BACKEND_INTERNAL_URL || "http://127.0.0.1:3001";
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -6,11 +8,11 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: "http://backend:3001/:path*",
+        destination: `${backendUrl}/:path*`,
       },
       {
         source: "/socket.io/:path*",
-        destination: "http://backend:3001/socket.io/:path*",
+        destination: `${backendUrl}/socket.io/:path*`,
       },
     ];
   },

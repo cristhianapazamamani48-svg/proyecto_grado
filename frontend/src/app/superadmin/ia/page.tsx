@@ -43,7 +43,7 @@ export default function SuperadminIaPage() {
   if (cargando) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
       </div>
     );
   }
@@ -70,7 +70,7 @@ export default function SuperadminIaPage() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-2">
             <p className="text-xs font-bold text-slate-400 uppercase">Proveedor Configurado</p>
-            <p className="text-2xl font-black text-indigo-600 uppercase">
+            <p className="text-2xl font-black text-blue-600 uppercase">
               {datosIa?.proveedorConfigurado || 'MOCK'}
             </p>
             <p className="text-xs text-slate-500">Modelo: {datosIa?.modeloConfigurado}</p>
@@ -140,13 +140,13 @@ export default function SuperadminIaPage() {
                             {item.plan}
                           </span>
                         </td>
-                        <td className="p-4 font-bold text-indigo-600">{item.usadasMes}</td>
+                        <td className="p-4 font-bold text-blue-600">{item.usadasMes}</td>
                         <td className="p-4 font-semibold text-slate-700">{item.limiteMes}</td>
                         <td className="p-4">
                           <div className="flex items-center gap-3">
                             <div className="w-24 bg-slate-100 h-2.5 rounded-full overflow-hidden">
                               <div
-                                className={`h-full ${pct >= 80 ? 'bg-amber-500' : 'bg-indigo-600'}`}
+                                className={`h-full ${pct >= 80 ? 'bg-amber-500' : 'bg-blue-600'}`}
                                 style={{ width: `${Math.min(100, pct)}%` }}
                               ></div>
                             </div>

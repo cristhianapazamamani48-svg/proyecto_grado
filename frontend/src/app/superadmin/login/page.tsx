@@ -55,19 +55,19 @@ export default function SuperadminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-indigo-50/40 flex items-center justify-center p-4 sm:p-6 font-sans">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 sm:p-6 font-sans">
       {/* Outer Card Container */}
-      <div className="w-full max-w-4xl bg-white rounded-[32px] shadow-2xl shadow-indigo-500/10 border border-slate-100 overflow-hidden min-h-[520px] flex flex-col md:flex-row relative">
+      <div className="w-full max-w-4xl bg-white rounded-[32px] shadow-2xl shadow-blue-500/10 border border-slate-100 overflow-hidden min-h-[520px] flex flex-col md:flex-row relative">
         
         {/* Left Side: Form Area */}
         <div className="w-full md:w-7/12 p-8 sm:p-12 flex flex-col justify-center z-10">
           <div className="max-w-md w-full mx-auto space-y-6">
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-md shadow-indigo-600/30">
+                <div className="w-8 h-8 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-md shadow-blue-600/30">
                   U
                 </div>
-                <span className="text-xs font-bold uppercase tracking-widest text-indigo-600">Superusuario SaaS</span>
+                <span className="text-xs font-bold uppercase tracking-widest text-blue-600">Superusuario SaaS</span>
               </div>
               <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Login Superadmin</h1>
               <p className="text-xs text-slate-400 mt-1">Acceso restringido a la administración global de Proyecto UUB</p>
@@ -93,7 +93,7 @@ export default function SuperadminLoginPage() {
                   placeholder="Email"
                   value={correo}
                   onChange={(e) => setCorreo(e.target.value)}
-                  className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+                  className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
                 />
               </div>
 
@@ -110,7 +110,7 @@ export default function SuperadminLoginPage() {
                   placeholder="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+                  className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
                 />
               </div>
 
@@ -118,7 +118,7 @@ export default function SuperadminLoginPage() {
               <button
                 type="submit"
                 disabled={cargando}
-                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-indigo-600/25 cursor-pointer mt-2"
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-blue-600/25 cursor-pointer mt-2"
               >
                 {cargando ? 'Procesando...' : 'Login Superadmin'}
               </button>
@@ -127,10 +127,10 @@ export default function SuperadminLoginPage() {
         </div>
 
         {/* Right Side: Diagonal Polygon Section */}
-        <div className="w-full md:w-5/12 bg-indigo-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto">
+        <div className="w-full md:w-5/12 bg-blue-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto">
           {/* Diagonal SVG Background overlay */}
           <div 
-            className="absolute inset-0 bg-indigo-600 z-0"
+            className="absolute inset-0 bg-blue-600 z-0"
             style={{
               clipPath: 'polygon(0 0, 100% 0, 100% 100%, 25% 100%)',
             }}
@@ -148,7 +148,7 @@ export default function SuperadminLoginPage() {
 
           <div className="relative z-10 space-y-2 mt-auto">
             <h3 className="text-2xl font-bold tracking-tight">Administración SaaS</h3>
-            <p className="text-xs text-indigo-100 leading-relaxed max-w-xs">
+            <p className="text-xs text-blue-100 leading-relaxed max-w-xs">
               Monitoreo centralizado de instituciones educativas, consumo de IA y usuarios globales.
             </p>
           </div>

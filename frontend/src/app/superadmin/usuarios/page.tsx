@@ -253,7 +253,7 @@ export default function SuperadminUsuariosPage() {
                         <span
                           className={`px-2.5 py-1 text-xs font-bold rounded-full ${
                             u.rol === 'SUPER_ADMIN'
-                              ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                              ? 'bg-slate-900 text-white border border-slate-800'
                               : u.rol === 'ADMIN_ORGANIZACION'
                               ? 'bg-blue-100 text-blue-800'
                               : 'bg-slate-100 text-slate-700'

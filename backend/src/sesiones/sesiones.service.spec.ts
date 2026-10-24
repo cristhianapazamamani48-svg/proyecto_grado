@@ -289,5 +289,38 @@ describe('SesionesService', () => {
         }),
       });
     });
+
+    it('conserva el comentario de IA al modificar su sugerencia', async () => {
+      prisma.respuesta.findUnique.mockResolvedValue({
+        idRespuesta: 11,
+        puntajeSugeridoIa: 9,
+        comentarioIa: 'La IA recomienda ampliar la justificación.',
+        puntaje: 7,
+        estadoRevisionIa: EstadoRevisionIa.SUGERIDA,
+        idParticipante: 1,
+        pregunta: { puntaje: 10, evaluacion: { idUsuario: 99 } },
+        participante: {
+          idParticipante: 1,
+          sesion: { evaluacion: { preguntas: [{ puntaje: 10 }] } },
+        },
+      });
+      prisma.respuesta.update.mockResolvedValue({
+        idRespuesta: 11,
+        puntaje: 8,
+        comentarioDocente: 'El razonamiento es válido, pero incompleto.',
+        estadoRevisionIa: EstadoRevisionIa.MODIFICADA,
+      });
+      prisma.respuesta.findMany.mockResolvedValue([{ idRespuesta: 11, puntaje: 8 }]);
+      prisma.participante.update.mockResolvedValue({});
+
+      await service.modificarSugerenciaIa(99, 11, {
+        puntaje: 8,
+        comentario: 'El razonamiento es válido, pero incompleto.',
+      });
+
+      const datosActualizacion = prisma.respuesta.update.mock.calls[0][0].data;
+      expect(datosActualizacion.comentarioDocente).toBe('El razonamiento es válido, pero incompleto.');
+      expect(datosActualizacion).not.toHaveProperty('comentarioIa');
+    });
   });
 });

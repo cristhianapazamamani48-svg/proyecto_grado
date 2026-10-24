@@ -3,8 +3,14 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { RolUsuario, TipoPlan, EstadoSuscripcion } from '@prisma/client';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+
+const mockVerifyIdToken = jest.fn();
+
+jest.mock('google-auth-library', () => ({
+  OAuth2Client: jest.fn().mockImplementation(() => ({ verifyIdToken: mockVerifyIdToken })),
+}));
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -144,63 +150,26 @@ describe('AuthService', () => {
   });
 
   describe('loginConGoogle', () => {
-    const originalEnv = process.env.NODE_ENV;
+    const originalClientId = process.env.GOOGLE_CLIENT_ID;
 
     beforeEach(() => {
-      process.env.NODE_ENV = 'development';
+      process.env.GOOGLE_CLIENT_ID = 'google-client-id.apps.googleusercontent.com';
+      mockVerifyIdToken.mockReset();
+      mockVerifyIdToken.mockRejectedValue(new Error('Invalid token'));
     });
 
     afterAll(() => {
-      process.env.NODE_ENV = originalEnv;
+      process.env.GOOGLE_CLIENT_ID = originalClientId;
     });
 
-    it('inicia sesión para usuario Google existente', async () => {
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValueOnce({
-        idUsuario: 5,
-        nombre: 'Ana',
-        apellido: 'Gómez',
-        correo: 'ana@gmail.com',
-        rol: RolUsuario.DOCENTE,
-        estado: 'ACTIVO',
-        idOrganizacionActual: 15,
-      });
-
-      const res = await service.loginConGoogle('mock_google_ana@gmail.com');
-
-      expect(res.token).toBe('mock_jwt_token_123');
-      expect(res.usuario.correo).toBe('ana@gmail.com');
-      expect(prisma.usuario.create).not.toHaveBeenCalled();
+    it('rechaza tokens de Google inválidos', async () => {
+      await expect(service.loginConGoogle('token-falsificado')).rejects.toThrow(UnauthorizedException);
+      expect(prisma.usuario.findUnique).not.toHaveBeenCalled();
     });
 
-    it('crea usuario docente y su espacio personal para usuario Google nuevo', async () => {
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValueOnce(null);
-      (prisma.usuario.create as jest.Mock).mockResolvedValueOnce({
-        idUsuario: 6,
-        nombre: 'Nuevo',
-        apellido: 'Docente',
-        correo: 'nuevo@gmail.com',
-        rol: RolUsuario.DOCENTE,
-        idOrganizacionActual: null,
-      });
-      (prisma.organizacion.create as jest.Mock).mockResolvedValueOnce({
-        idOrganizacion: 30,
-        nombre: 'Espacio de Nuevo',
-        slug: 'docente-6-new',
-        plan: TipoPlan.GRATUITO,
-      });
-      (prisma.membresia.create as jest.Mock).mockResolvedValueOnce({});
-      (prisma.suscripcionOrganizacion.create as jest.Mock).mockResolvedValueOnce({});
-      (prisma.usuario.update as jest.Mock).mockResolvedValueOnce({
-        idUsuario: 6,
-        idOrganizacionActual: 30,
-      });
-
-      const res = await service.loginConGoogle('mock_google_nuevo@gmail.com');
-
-      expect(res.token).toBe('mock_jwt_token_123');
-      expect(res.usuario.nombre).toBe('Nuevo');
-      expect(prisma.usuario.create).toHaveBeenCalled();
-      expect(prisma.organizacion.create).toHaveBeenCalled();
+    it('requiere GOOGLE_CLIENT_ID para verificar tokens', async () => {
+      delete process.env.GOOGLE_CLIENT_ID;
+      await expect(service.loginConGoogle('cualquier-token')).rejects.toThrow(ServiceUnavailableException);
     });
   });
 });

@@ -157,7 +157,7 @@ export default function SuperadminDashboardPage() {
 
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-2">
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Correcciones IA (Este Mes)</p>
-            <p className="text-3xl font-black text-indigo-600">{resumen?.ia?.correccionesEsteMes || 0}</p>
+            <p className="text-3xl font-black text-blue-600">{resumen?.ia?.correccionesEsteMes || 0}</p>
             <p className="text-xs text-slate-500 pt-1">
               Proveedor: <span className="font-bold uppercase text-slate-700">{resumen?.ia?.proveedorActual}</span>
             </p>

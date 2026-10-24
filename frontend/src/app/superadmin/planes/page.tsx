@@ -41,8 +41,8 @@ const PLANES_INFO = [
     limiteEstudiantes: 10000,
     limiteEvaluaciones: 9999,
     limiteCorreccionesIaMes: 9999,
-    color: 'border-indigo-400 bg-indigo-50/30',
-    badge: 'bg-indigo-100 text-indigo-800',
+    color: 'border-blue-400 bg-blue-50/30',
+    badge: 'bg-blue-100 text-blue-800',
   },
 ];
 
@@ -132,7 +132,7 @@ export default function SuperadminPlanesPage() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Correcciones IA / Mes:</span>
-                      <span className="font-bold text-indigo-600">{plan.limiteCorreccionesIaMes}</span>
+                      <span className="font-bold text-blue-600">{plan.limiteCorreccionesIaMes}</span>
                     </div>
                   </div>
                 </div>
