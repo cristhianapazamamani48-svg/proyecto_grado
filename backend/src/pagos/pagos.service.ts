@@ -18,6 +18,7 @@ import {
   TipoPlan,
   EstadoSuscripcion,
   EstadoPagoTransaccion,
+  EstadoGeneral,
 } from '@prisma/client';
 
 const PRECIOS_PLANES: Record<TipoPlan, { usd: number; bob: number }> = {
@@ -571,12 +572,31 @@ export class PagosService {
   // ─────────────────────────────────────────────────────────────────
   // TAREA PROGRAMADA: DEGRADACIÓN DE PLANES Y SUSPENSIONES VENCIDAS
   // ─────────────────────────────────────────────────────────────────
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT, { timeZone: 'America/La_Paz' })
   async degradarSuscripcionesVencidas() {
     this.logger.log('[Cron Degradación] Ejecutando revisión de suscripciones vencidas...');
     const ahora = new Date();
 
-    // 1. Período de gracia expirado -> SUSPENDIDA_POR_PAGO
+    // 1. Período pagado vencido -> 7 días de gracia para planes de pago.
+    const fechaFinGracia = new Date(ahora);
+    fechaFinGracia.setDate(fechaFinGracia.getDate() + 7);
+    const enGracia = await this.prisma.suscripcionOrganizacion.updateMany({
+      where: {
+        estado: EstadoSuscripcion.ACTIVA,
+        plan: { not: TipoPlan.GRATUITO },
+        fechaFinPeriodo: { lt: ahora },
+      },
+      data: {
+        estado: EstadoSuscripcion.EN_PERIODO_GRACIA,
+        fechaFinGracia,
+      },
+    });
+
+    if (enGracia.count > 0) {
+      this.logger.warn(`[Cron Degradación] ${enGracia.count} suscripciones ingresaron al período de gracia.`);
+    }
+
+    // 2. Período de gracia expirado -> SUSPENDIDA_POR_PAGO
     const suspendidas = await this.prisma.suscripcionOrganizacion.updateMany({
       where: {
         estado: EstadoSuscripcion.EN_PERIODO_GRACIA,
@@ -591,11 +611,21 @@ export class PagosService {
       this.logger.warn(`[Cron Degradación] ${suspendidas.count} suscripciones suspendidas por expiración de gracia.`);
     }
 
-    // 2. Suscripciones CANCELADAS cuyo periodo pagado expiró -> degradar a GRATUITO
-    const canceladasVencidas = await this.prisma.suscripcionOrganizacion.findMany({
+    // 3. Suscripciones vencidas de forma definitiva -> degradar la organización a GRATUITO.
+    const haceTreintaDias = new Date(ahora);
+    haceTreintaDias.setDate(haceTreintaDias.getDate() - 30);
+    const suscripcionesParaDegradar = await this.prisma.suscripcionOrganizacion.findMany({
       where: {
-        estado: EstadoSuscripcion.CANCELADA,
-        fechaFinPeriodo: { lt: ahora },
+        OR: [
+          {
+            estado: EstadoSuscripcion.CANCELADA,
+            fechaFinPeriodo: { lt: ahora },
+          },
+          {
+            estado: EstadoSuscripcion.SUSPENDIDA_POR_PAGO,
+            fechaFinPeriodo: { lt: haceTreintaDias },
+          },
+        ],
       },
       include: {
         organizacion: true,
@@ -604,21 +634,28 @@ export class PagosService {
 
     const limitesGratuito = LIMITES_PREDETERMINADOS[TipoPlan.GRATUITO];
 
-    for (const sub of canceladasVencidas) {
+    for (const sub of suscripcionesParaDegradar) {
       if (sub.organizacion && sub.organizacion.plan !== TipoPlan.GRATUITO) {
-        await this.prisma.organizacion.update({
-          where: { idOrganizacion: sub.idOrganizacion },
-          data: {
-            plan: TipoPlan.GRATUITO,
-            limiteDocentes: limitesGratuito.limiteDocentes,
-            limiteEstudiantes: limitesGratuito.limiteEstudiantes,
-            limiteEvaluaciones: limitesGratuito.limiteEvaluaciones,
-            limiteCorreccionesIaMes: limitesGratuito.limiteCorreccionesIaMes,
-            diasCaducidadEvaluacion: 7,
-            esContenidoPrivado: false,
-          },
-        });
-        this.logger.log(`[Cron Degradación] Institución ${sub.idOrganizacion} degradada a Plan GRATUITO.`);
+        try {
+          await this.prisma.$transaction(async (tx) => {
+            await tx.organizacion.update({
+              where: { idOrganizacion: sub.idOrganizacion },
+              data: {
+                plan: TipoPlan.GRATUITO,
+                estado: EstadoGeneral.ACTIVO,
+                limiteDocentes: limitesGratuito.limiteDocentes,
+                limiteEstudiantes: limitesGratuito.limiteEstudiantes,
+                limiteEvaluaciones: limitesGratuito.limiteEvaluaciones,
+                limiteCorreccionesIaMes: limitesGratuito.limiteCorreccionesIaMes,
+                diasCaducidadEvaluacion: 7,
+                esContenidoPrivado: false,
+              },
+            });
+          });
+          this.logger.log(`[Cron Degradación] Institución ${sub.idOrganizacion} degradada a Plan GRATUITO.`);
+        } catch (error) {
+          this.logger.error(`[Cron Degradación] No se pudo degradar la institución ${sub.idOrganizacion}.`, error);
+        }
       }
     }
   }

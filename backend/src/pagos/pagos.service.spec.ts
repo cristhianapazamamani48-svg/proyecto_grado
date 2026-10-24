@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
-import { ProveedorPago, EstadoPagoTransaccion } from '@prisma/client';
+import { ProveedorPago, EstadoPagoTransaccion, EstadoGeneral } from '@prisma/client';
 
 import { PagosService } from './pagos.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -1315,15 +1315,46 @@ describe('PagosService — Cron degradarSuscripcionesVencidas', () => {
     module = await buildModule();
     service = module.get(PagosService);
     prisma = module.get(PrismaService);
+    (prisma.$transaction as jest.Mock).mockImplementation((operaciones) => {
+      if (typeof operaciones === 'function') {
+        return operaciones({ organizacion: prisma.organizacion });
+      }
+      return Promise.resolve([]);
+    });
   });
 
-  it('suspende suscripciones cuyo período de gracia ha expirado', async () => {
-    (prisma.suscripcionOrganizacion.updateMany as jest.Mock).mockResolvedValueOnce({ count: 3 });
+  it('pasa suscripciones activas de pago vencidas a período de gracia de siete días', async () => {
+    (prisma.suscripcionOrganizacion.updateMany as jest.Mock)
+      .mockResolvedValueOnce({ count: 2 })
+      .mockResolvedValueOnce({ count: 0 });
     (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValueOnce([]);
 
     await service.degradarSuscripcionesVencidas();
 
-    expect(prisma.suscripcionOrganizacion.updateMany).toHaveBeenCalledWith({
+    expect(prisma.suscripcionOrganizacion.updateMany).toHaveBeenNthCalledWith(1, {
+      where: {
+        estado: 'ACTIVA',
+        plan: { not: 'GRATUITO' },
+        fechaFinPeriodo: { lt: expect.any(Date) },
+      },
+      data: {
+        estado: 'EN_PERIODO_GRACIA',
+        fechaFinGracia: expect.any(Date),
+      },
+    });
+    const fechaFinGracia = (prisma.suscripcionOrganizacion.updateMany as jest.Mock).mock.calls[0][0].data.fechaFinGracia;
+    expect(fechaFinGracia.getTime()).toBeGreaterThan(Date.now() + 6 * 24 * 60 * 60 * 1000);
+  });
+
+  it('suspende suscripciones cuyo período de gracia ha expirado', async () => {
+    (prisma.suscripcionOrganizacion.updateMany as jest.Mock)
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 3 });
+    (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    await service.degradarSuscripcionesVencidas();
+
+    expect(prisma.suscripcionOrganizacion.updateMany).toHaveBeenNthCalledWith(2, {
       where: {
         estado: 'EN_PERIODO_GRACIA',
         fechaFinGracia: { lt: expect.any(Date) },
@@ -1334,8 +1365,10 @@ describe('PagosService — Cron degradarSuscripcionesVencidas', () => {
     });
   });
 
-  it('degrada organizaciones a GRATUITO cuando la suscripción CANCELADA expira', async () => {
-    (prisma.suscripcionOrganizacion.updateMany as jest.Mock).mockResolvedValueOnce({ count: 0 });
+  it('degrada suscripciones CANCELADAS vencidas y SUSPENDIDAS por más de 30 días sin alterar la suscripción', async () => {
+    (prisma.suscripcionOrganizacion.updateMany as jest.Mock)
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 0 });
     (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValueOnce([
       {
         idOrganizacion: 42,
@@ -1345,21 +1378,44 @@ describe('PagosService — Cron degradarSuscripcionesVencidas', () => {
           plan: 'MAESTRO_PRO',
         },
       },
+      {
+        idOrganizacion: 43,
+        estado: 'SUSPENDIDA_POR_PAGO',
+        organizacion: {
+          idOrganizacion: 43,
+          plan: 'BASICO',
+        },
+      },
     ]);
-    (prisma.organizacion.update as jest.Mock).mockResolvedValueOnce({});
+    (prisma.organizacion.update as jest.Mock).mockResolvedValue({});
 
     await service.degradarSuscripcionesVencidas();
 
+    expect(prisma.suscripcionOrganizacion.findMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { estado: 'CANCELADA', fechaFinPeriodo: { lt: expect.any(Date) } },
+          { estado: 'SUSPENDIDA_POR_PAGO', fechaFinPeriodo: { lt: expect.any(Date) } },
+        ],
+      },
+      include: { organizacion: true },
+    });
     expect(prisma.organizacion.update).toHaveBeenCalledWith({
       where: { idOrganizacion: 42 },
       data: expect.objectContaining({
         plan: 'GRATUITO',
+        estado: EstadoGeneral.ACTIVO,
         limiteDocentes: 5,
         limiteEvaluaciones: 20,
         limiteCorreccionesIaMes: 10,
         esContenidoPrivado: false,
       }),
     });
+    expect(prisma.organizacion.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { idOrganizacion: 43 },
+    }));
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(prisma.suscripcionOrganizacion.update).not.toHaveBeenCalled();
   });
 });
 

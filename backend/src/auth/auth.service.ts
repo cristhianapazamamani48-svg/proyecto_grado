@@ -61,6 +61,43 @@ export class AuthService {
     return org.idOrganizacion;
   }
 
+  private async verificarInstitucionActiva(usuario: { rol: RolUsuario; idOrganizacionActual?: number | null }) {
+    if (usuario.rol === RolUsuario.SUPER_ADMIN || !usuario.idOrganizacionActual) {
+      return;
+    }
+
+    const org = await this.prisma.organizacion.findUnique({
+      where: { idOrganizacion: usuario.idOrganizacionActual },
+      select: { estado: true, nombre: true },
+    });
+
+    if (org?.estado === 'INACTIVO') {
+      throw new ForbiddenException(
+        `La institución educativa "${org.nombre}" se encuentra suspendida temporalmente. Contacte al administrador.`,
+      );
+    }
+  }
+
+  private async verificarTokenGoogle(idToken: string): Promise<any> {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      throw new ServiceUnavailableException('El inicio de sesión con Google no está configurado.');
+    }
+
+    try {
+      const { OAuth2Client } = await import('google-auth-library');
+      const client = new OAuth2Client(clientId);
+      const ticket = await client.verifyIdToken({
+        idToken,
+        audience: clientId,
+      });
+
+      return ticket.getPayload();
+    } catch {
+      throw new UnauthorizedException('Token de Google inválido o expirado.');
+    }
+  }
+
   async registrarDocente(nombre: string, apellido: string, correo: string, password: string) {
     const existe = await this.prisma.usuario.findUnique({ where: { correo } });
     if (existe) {
@@ -113,18 +150,7 @@ export class AuthService {
       usuario.idOrganizacionActual = await this.asegurarEspacioPersonalDocente(usuario);
     }
 
-    // Verificar si la institución está suspendida (excepto SUPER_ADMIN)
-    if (usuario.rol !== RolUsuario.SUPER_ADMIN && usuario.idOrganizacionActual) {
-      const org = await this.prisma.organizacion.findUnique({
-        where: { idOrganizacion: usuario.idOrganizacionActual },
-        select: { estado: true, nombre: true },
-      });
-      if (org && org.estado === 'INACTIVO') {
-        throw new ForbiddenException(
-          `La institución educativa "${org.nombre}" se encuentra suspendida temporalmente. Contacte al administrador.`,
-        );
-      }
-    }
+    await this.verificarInstitucionActiva(usuario);
 
     const token = this.jwtService.sign({
       sub: usuario.idUsuario,
@@ -144,29 +170,14 @@ export class AuthService {
       throw new BadRequestException('El token de Google es obligatorio.');
     }
 
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    if (!clientId) {
-      throw new ServiceUnavailableException('El inicio de sesión con Google no está configurado.');
-    }
-
-    let payload: any;
-
-    try {
-      const { OAuth2Client } = await import('google-auth-library');
-      const client = new OAuth2Client(clientId);
-
-      const ticket = await client.verifyIdToken({
-        idToken,
-        audience: clientId,
-      });
-
-      payload = ticket.getPayload();
-    } catch {
-      throw new UnauthorizedException('Token de Google inválido o expirado.');
-    }
+    const payload = await this.verificarTokenGoogle(idToken);
 
     if (!payload?.email) {
       throw new UnauthorizedException('No se pudo obtener el correo de la cuenta de Google.');
+    }
+
+    if (payload.email_verified !== true) {
+      throw new UnauthorizedException('El correo de Google no está verificado.');
     }
 
     const correo = payload.email.toLowerCase().trim();
@@ -177,6 +188,10 @@ export class AuthService {
     if (usuario) {
       if (usuario.estado === 'INACTIVO') {
         throw new UnauthorizedException('Tu cuenta de usuario ha sido desactivada por el administrador.');
+      }
+
+      if (usuario.rol === RolUsuario.SUPER_ADMIN) {
+        throw new ForbiddenException('Esta cuenta debe iniciar sesión con contraseña.');
       }
 
       if (usuario.rol === RolUsuario.DOCENTE && !usuario.idOrganizacionActual) {
@@ -199,8 +214,10 @@ export class AuthService {
         },
       });
 
-      await this.asegurarEspacioPersonalDocente(usuario);
+      usuario.idOrganizacionActual = await this.asegurarEspacioPersonalDocente(usuario);
     }
+
+    await this.verificarInstitucionActiva(usuario);
 
     const token = this.jwtService.sign({
       sub: usuario.idUsuario,

@@ -3,14 +3,8 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { RolUsuario, TipoPlan, EstadoSuscripcion } from '@prisma/client';
-import { ConflictException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-
-const mockVerifyIdToken = jest.fn();
-
-jest.mock('google-auth-library', () => ({
-  OAuth2Client: jest.fn().mockImplementation(() => ({ verifyIdToken: mockVerifyIdToken })),
-}));
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -150,26 +144,117 @@ describe('AuthService', () => {
   });
 
   describe('loginConGoogle', () => {
-    const originalClientId = process.env.GOOGLE_CLIENT_ID;
+    const payloadGoogle = {
+      email: 'docente@uub.edu',
+      email_verified: true,
+      given_name: 'Ana',
+      family_name: 'Docente',
+    };
 
-    beforeEach(() => {
-      process.env.GOOGLE_CLIENT_ID = 'google-client-id.apps.googleusercontent.com';
-      mockVerifyIdToken.mockReset();
-      mockVerifyIdToken.mockRejectedValue(new Error('Invalid token'));
-    });
+    const simularTokenGoogle = (payload: Record<string, unknown>) =>
+      jest.spyOn(service as any, 'verificarTokenGoogle').mockResolvedValue(payload);
 
-    afterAll(() => {
-      process.env.GOOGLE_CLIENT_ID = originalClientId;
-    });
+    it('rechaza un correo de Google no verificado', async () => {
+      simularTokenGoogle({ ...payloadGoogle, email_verified: false });
 
-    it('rechaza tokens de Google inválidos', async () => {
-      await expect(service.loginConGoogle('token-falsificado')).rejects.toThrow(UnauthorizedException);
+      await expect(service.loginConGoogle('token')).rejects.toThrow('El correo de Google no está verificado.');
       expect(prisma.usuario.findUnique).not.toHaveBeenCalled();
     });
 
-    it('requiere GOOGLE_CLIENT_ID para verificar tokens', async () => {
-      delete process.env.GOOGLE_CLIENT_ID;
-      await expect(service.loginConGoogle('cualquier-token')).rejects.toThrow(ServiceUnavailableException);
+    it('rechaza un correo de Google sin verificación explícita', async () => {
+      simularTokenGoogle({ email: payloadGoogle.email });
+
+      await expect(service.loginConGoogle('token')).rejects.toThrow('El correo de Google no está verificado.');
+      expect(prisma.usuario.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('impide que un SUPER_ADMIN inicie sesión con Google', async () => {
+      simularTokenGoogle(payloadGoogle);
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValueOnce({
+        idUsuario: 1,
+        nombre: 'Admin',
+        apellido: 'Principal',
+        correo: payloadGoogle.email,
+        estado: 'ACTIVO',
+        rol: RolUsuario.SUPER_ADMIN,
+        idOrganizacionActual: null,
+      });
+
+      await expect(service.loginConGoogle('token')).rejects.toThrow('Esta cuenta debe iniciar sesión con contraseña.');
+    });
+
+    it('rechaza a un docente cuya institución está INACTIVA', async () => {
+      simularTokenGoogle(payloadGoogle);
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValueOnce({
+        idUsuario: 2,
+        nombre: 'Ana',
+        apellido: 'Docente',
+        correo: payloadGoogle.email,
+        estado: 'ACTIVO',
+        rol: RolUsuario.DOCENTE,
+        idOrganizacionActual: 12,
+      });
+      (prisma.organizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+        nombre: 'Colegio Suspendido',
+        estado: 'INACTIVO',
+      });
+
+      await expect(service.loginConGoogle('token')).rejects.toThrow(
+        'La institución educativa "Colegio Suspendido" se encuentra suspendida temporalmente. Contacte al administrador.',
+      );
+    });
+
+    it('permite iniciar sesión a un docente existente de una institución activa', async () => {
+      simularTokenGoogle(payloadGoogle);
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValueOnce({
+        idUsuario: 3,
+        nombre: 'Ana',
+        apellido: 'Docente',
+        correo: payloadGoogle.email,
+        estado: 'ACTIVO',
+        rol: RolUsuario.DOCENTE,
+        idOrganizacionActual: 13,
+      });
+      (prisma.organizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+        nombre: 'Colegio Activo',
+        estado: 'ACTIVO',
+      });
+
+      const resultado = await service.loginConGoogle('token');
+
+      expect(resultado.token).toBe('mock_jwt_token_123');
+      expect(resultado.usuario.idUsuario).toBe(3);
+    });
+
+    it('crea y permite iniciar sesión a un docente nuevo', async () => {
+      simularTokenGoogle(payloadGoogle);
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValueOnce(null);
+      (prisma.usuario.create as jest.Mock).mockResolvedValueOnce({
+        idUsuario: 4,
+        nombre: 'Ana',
+        apellido: 'Docente',
+        correo: payloadGoogle.email,
+        estado: 'ACTIVO',
+        rol: RolUsuario.DOCENTE,
+        idOrganizacionActual: null,
+      });
+      (prisma.organizacion.create as jest.Mock).mockResolvedValueOnce({
+        idOrganizacion: 14,
+        nombre: 'Espacio de Ana',
+      });
+      (prisma.membresia.create as jest.Mock).mockResolvedValueOnce({});
+      (prisma.suscripcionOrganizacion.create as jest.Mock).mockResolvedValueOnce({});
+      (prisma.usuario.update as jest.Mock).mockResolvedValueOnce({});
+      (prisma.organizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+        nombre: 'Espacio de Ana',
+        estado: 'ACTIVO',
+      });
+
+      const resultado = await service.loginConGoogle('token');
+
+      expect(resultado.token).toBe('mock_jwt_token_123');
+      expect(resultado.usuario.idUsuario).toBe(4);
+      expect(prisma.organizacion.create).toHaveBeenCalled();
     });
   });
 });
