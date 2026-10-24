@@ -75,3 +75,34 @@ Se especifica un conjunto cerrado de modos de calificación por espacio, en luga
 ## 8. Recomendación
 
 Se mantiene la recomendación original del arquitecto: antes de programar, formalizar estas reglas en un documento SRS (requisitos funcionales, no funcionales, reglas de negocio, casos de uso). Los ajustes de este documento deberían incorporarse directamente en esa versión formal.
+
+## Migraciones de base de datos
+
+El backend usa migraciones de Prisma. No se debe usar `prisma db push` en entornos compartidos o de producción.
+
+### Base de datos nueva
+
+Con `DATABASE_URL` apuntando a una base vacía, aplicar todas las migraciones antes de iniciar el backend:
+
+```bash
+cd backend
+npx prisma migrate deploy
+```
+
+La imagen Docker ejecuta este mismo comando automáticamente antes de iniciar la aplicación.
+
+### Base de datos existente con datos
+
+Si la base ya fue creada con el esquema equivalente al baseline y contiene datos, no se debe ejecutar el baseline sobre ella. Primero se marca como aplicado y luego se despliegan las migraciones posteriores:
+
+```bash
+cd backend
+npx prisma migrate resolve --applied 20261024133000_baseline
+npx prisma migrate deploy
+```
+
+En desarrollo, para crear una migración nueva a partir de un cambio intencional de `prisma/schema.prisma`, usar:
+
+```bash
+npm run prisma:migrate:dev -- --name descripcion_del_cambio
+```
