@@ -1,4 +1,4 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 **/node_modules/
 
@@ -29,3 +29,6 @@ yarn-error.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Database backups
+backend/respaldo.sql
