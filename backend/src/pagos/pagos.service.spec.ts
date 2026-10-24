@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
-import { ProveedorPago, EstadoPagoTransaccion, EstadoGeneral } from '@prisma/client';
+import { ProveedorPago, EstadoPagoTransaccion, EstadoGeneral, EstadoSuscripcion, TipoPlan } from '@prisma/client';
 
 import { PagosService } from './pagos.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -1317,7 +1317,10 @@ describe('PagosService — Cron degradarSuscripcionesVencidas', () => {
     prisma = module.get(PrismaService);
     (prisma.$transaction as jest.Mock).mockImplementation((operaciones) => {
       if (typeof operaciones === 'function') {
-        return operaciones({ organizacion: prisma.organizacion });
+        return operaciones({
+          organizacion: prisma.organizacion,
+          suscripcionOrganizacion: prisma.suscripcionOrganizacion,
+        });
       }
       return Promise.resolve([]);
     });
@@ -1365,29 +1368,43 @@ describe('PagosService — Cron degradarSuscripcionesVencidas', () => {
     });
   });
 
-  it('degrada suscripciones CANCELADAS vencidas y SUSPENDIDAS por más de 30 días sin alterar la suscripción', async () => {
+  it('degrada suscripciones vencidas a GRATUITO y deja su suscripción utilizable', async () => {
     (prisma.suscripcionOrganizacion.updateMany as jest.Mock)
       .mockResolvedValueOnce({ count: 0 })
       .mockResolvedValueOnce({ count: 0 });
+    const suscripcion = {
+      idOrganizacion: 42,
+      estado: EstadoSuscripcion.SUSPENDIDA_POR_PAGO,
+      plan: 'MAESTRO_PRO',
+      monto: 7.25,
+      idSuscripcionExterna: 'sub_42',
+      fechaFinPeriodo: new Date('2026-08-01'),
+      fechaFinGracia: new Date('2026-08-08'),
+      autoRenovar: true,
+    };
+    const organizacion = {
+      idOrganizacion: 42,
+      plan: 'MAESTRO_PRO',
+      limiteDocentes: 99,
+      limiteEstudiantes: 999,
+      limiteEvaluaciones: 999,
+      limiteCorreccionesIaMes: 999,
+      estado: EstadoGeneral.INACTIVO,
+    };
     (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValueOnce([
       {
-        idOrganizacion: 42,
-        estado: 'CANCELADA',
-        organizacion: {
-          idOrganizacion: 42,
-          plan: 'MAESTRO_PRO',
-        },
-      },
-      {
-        idOrganizacion: 43,
-        estado: 'SUSPENDIDA_POR_PAGO',
-        organizacion: {
-          idOrganizacion: 43,
-          plan: 'BASICO',
-        },
+        ...suscripcion,
+        organizacion,
       },
     ]);
-    (prisma.organizacion.update as jest.Mock).mockResolvedValue({});
+    (prisma.organizacion.update as jest.Mock).mockImplementation(({ data }) => {
+      Object.assign(organizacion, data);
+      return Promise.resolve(organizacion);
+    });
+    (prisma.suscripcionOrganizacion.update as jest.Mock).mockImplementation(({ data }) => {
+      Object.assign(suscripcion, data);
+      return Promise.resolve(suscripcion);
+    });
 
     await service.degradarSuscripcionesVencidas();
 
@@ -1411,11 +1428,60 @@ describe('PagosService — Cron degradarSuscripcionesVencidas', () => {
         esContenidoPrivado: false,
       }),
     });
+    expect(prisma.suscripcionOrganizacion.update).toHaveBeenCalledWith({
+      where: { idOrganizacion: 42 },
+      data: {
+        estado: EstadoSuscripcion.ACTIVA,
+        autoRenovar: false,
+        fechaFinPeriodo: null,
+        fechaFinGracia: null,
+      },
+    });
+    expect(organizacion.plan).toBe(TipoPlan.GRATUITO);
+    expect(suscripcion).toEqual(expect.objectContaining({
+      estado: EstadoSuscripcion.ACTIVA,
+      autoRenovar: false,
+      fechaFinPeriodo: null,
+      fechaFinGracia: null,
+      plan: 'MAESTRO_PRO',
+      monto: 7.25,
+      idSuscripcionExterna: 'sub_42',
+    }));
+
+    (prisma.organizacion.findUnique as jest.Mock).mockResolvedValueOnce({
+      ...organizacion,
+      suscripcion,
+    });
+    (prisma as any).evaluacion = { count: jest.fn().mockResolvedValue(0) };
+    await expect(service.verificarPermisosYCuotas(42, 'CREAR_EVALUACION')).resolves.toBe(true);
+  });
+
+  it('continúa degradando otras organizaciones si una transacción falla', async () => {
+    (prisma.suscripcionOrganizacion.updateMany as jest.Mock)
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 0 });
+    (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValueOnce([
+      { idOrganizacion: 42, organizacion: { plan: TipoPlan.MAESTRO_PRO } },
+      { idOrganizacion: 43, organizacion: { plan: TipoPlan.BASICO } },
+    ]);
+    (prisma.$transaction as jest.Mock)
+      .mockRejectedValueOnce(new Error('fallo de transacción'))
+      .mockImplementationOnce((operacion) => operacion({
+        organizacion: prisma.organizacion,
+        suscripcionOrganizacion: prisma.suscripcionOrganizacion,
+      }));
+    (prisma.organizacion.update as jest.Mock).mockResolvedValueOnce({});
+    (prisma.suscripcionOrganizacion.update as jest.Mock).mockResolvedValueOnce({});
+
+    await service.degradarSuscripcionesVencidas();
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(prisma.organizacion.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { idOrganizacion: 43 },
     }));
-    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
-    expect(prisma.suscripcionOrganizacion.update).not.toHaveBeenCalled();
+    expect(prisma.suscripcionOrganizacion.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { idOrganizacion: 43 },
+    }));
   });
 });
 
@@ -1428,6 +1494,15 @@ describe('PagosService — verificarPermisosYCuotas y Degradación Inline', () =
     module = await buildModule();
     service = module.get(PagosService);
     prisma = module.get(PrismaService);
+    (prisma.$transaction as jest.Mock).mockImplementation((operacion) => {
+      if (typeof operacion === 'function') {
+        return operacion({
+          organizacion: prisma.organizacion,
+          suscripcionOrganizacion: prisma.suscripcionOrganizacion,
+        });
+      }
+      return Promise.resolve([]);
+    });
   });
 
   it('bloquea inmediatamente si el período de gracia expiró', async () => {
@@ -1451,6 +1526,59 @@ describe('PagosService — verificarPermisosYCuotas y Degradación Inline', () =
       where: { idOrganizacion: 5 },
       data: { estado: 'SUSPENDIDA_POR_PAGO' },
     });
+  });
+
+  it('degrada una cancelación vencida y deja la suscripción gratuita utilizable', async () => {
+    const ayer = new Date();
+    ayer.setDate(ayer.getDate() - 1);
+    const suscripcion = {
+      estado: EstadoSuscripcion.CANCELADA,
+      plan: TipoPlan.MAESTRO_PRO,
+      monto: 7.25,
+      idSuscripcionExterna: 'sub_cancelada',
+      fechaFinPeriodo: ayer,
+      fechaFinGracia: ayer,
+      autoRenovar: true,
+    };
+    const organizacion = {
+      idOrganizacion: 6,
+      plan: TipoPlan.MAESTRO_PRO,
+      limiteDocentes: 99,
+      limiteEstudiantes: 999,
+      limiteEvaluaciones: 999,
+      limiteCorreccionesIaMes: 999,
+      suscripcion,
+    };
+    (prisma.organizacion.findUnique as jest.Mock).mockResolvedValueOnce(organizacion);
+    (prisma.organizacion.update as jest.Mock).mockImplementation(({ data }) =>
+      Promise.resolve({ ...organizacion, ...data }),
+    );
+    (prisma.suscripcionOrganizacion.update as jest.Mock).mockImplementation(({ data }) => {
+      Object.assign(suscripcion, data);
+      return Promise.resolve(suscripcion);
+    });
+    (prisma as any).evaluacion = { count: jest.fn().mockResolvedValue(0) };
+
+    await expect(service.verificarPermisosYCuotas(6, 'CREAR_EVALUACION')).resolves.toBe(true);
+
+    expect(prisma.suscripcionOrganizacion.update).toHaveBeenCalledWith({
+      where: { idOrganizacion: 6 },
+      data: {
+        estado: EstadoSuscripcion.ACTIVA,
+        autoRenovar: false,
+        fechaFinPeriodo: null,
+        fechaFinGracia: null,
+      },
+    });
+    expect(suscripcion).toEqual(expect.objectContaining({
+      plan: TipoPlan.MAESTRO_PRO,
+      monto: 7.25,
+      idSuscripcionExterna: 'sub_cancelada',
+      estado: EstadoSuscripcion.ACTIVA,
+      autoRenovar: false,
+      fechaFinPeriodo: null,
+      fechaFinGracia: null,
+    }));
   });
 
   it('degrada inline y bloquea CREAR_EVALUACION si supera el límite gratuito tras expiración de cancelación', async () => {

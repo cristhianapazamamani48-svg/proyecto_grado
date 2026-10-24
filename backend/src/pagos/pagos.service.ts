@@ -19,6 +19,7 @@ import {
   EstadoSuscripcion,
   EstadoPagoTransaccion,
   EstadoGeneral,
+  Prisma,
 } from '@prisma/client';
 
 const PRECIOS_PLANES: Record<TipoPlan, { usd: number; bob: number }> = {
@@ -569,6 +570,40 @@ export class PagosService {
     await this.prisma.$transaction(operaciones);
   }
 
+  private async degradarOrganizacionAGratuito(
+    tx: Pick<Prisma.TransactionClient, 'organizacion' | 'suscripcionOrganizacion'>,
+    idOrganizacion: number,
+  ) {
+    const limitesGratuito = LIMITES_PREDETERMINADOS[TipoPlan.GRATUITO];
+    const organizacion = await tx.organizacion.update({
+      where: { idOrganizacion },
+      data: {
+        plan: TipoPlan.GRATUITO,
+        estado: EstadoGeneral.ACTIVO,
+        limiteDocentes: limitesGratuito.limiteDocentes,
+        limiteEstudiantes: limitesGratuito.limiteEstudiantes,
+        limiteEvaluaciones: limitesGratuito.limiteEvaluaciones,
+        limiteCorreccionesIaMes: limitesGratuito.limiteCorreccionesIaMes,
+        diasCaducidadEvaluacion: 7,
+        esContenidoPrivado: false,
+      },
+    });
+
+    // Se conservan plan, monto e idSuscripcionExterna para que un webhook tardío
+    // del proveedor no pueda interpretar la suscripción gratuita como una renovación.
+    await tx.suscripcionOrganizacion.update({
+      where: { idOrganizacion },
+      data: {
+        estado: EstadoSuscripcion.ACTIVA,
+        autoRenovar: false,
+        fechaFinPeriodo: null,
+        fechaFinGracia: null,
+      },
+    });
+
+    return organizacion;
+  }
+
   // ─────────────────────────────────────────────────────────────────
   // TAREA PROGRAMADA: DEGRADACIÓN DE PLANES Y SUSPENSIONES VENCIDAS
   // ─────────────────────────────────────────────────────────────────
@@ -632,25 +667,11 @@ export class PagosService {
       },
     });
 
-    const limitesGratuito = LIMITES_PREDETERMINADOS[TipoPlan.GRATUITO];
-
     for (const sub of suscripcionesParaDegradar) {
       if (sub.organizacion && sub.organizacion.plan !== TipoPlan.GRATUITO) {
         try {
           await this.prisma.$transaction(async (tx) => {
-            await tx.organizacion.update({
-              where: { idOrganizacion: sub.idOrganizacion },
-              data: {
-                plan: TipoPlan.GRATUITO,
-                estado: EstadoGeneral.ACTIVO,
-                limiteDocentes: limitesGratuito.limiteDocentes,
-                limiteEstudiantes: limitesGratuito.limiteEstudiantes,
-                limiteEvaluaciones: limitesGratuito.limiteEvaluaciones,
-                limiteCorreccionesIaMes: limitesGratuito.limiteCorreccionesIaMes,
-                diasCaducidadEvaluacion: 7,
-                esContenidoPrivado: false,
-              },
-            });
+            await this.degradarOrganizacionAGratuito(tx, sub.idOrganizacion);
           });
           this.logger.log(`[Cron Degradación] Institución ${sub.idOrganizacion} degradada a Plan GRATUITO.`);
         } catch (error) {
@@ -781,19 +802,9 @@ export class PagosService {
 
     if (org.suscripcion?.estado === EstadoSuscripcion.CANCELADA && org.suscripcion.fechaFinPeriodo) {
       if (new Date() > org.suscripcion.fechaFinPeriodo) {
-        const limitesGratuito = LIMITES_PREDETERMINADOS[TipoPlan.GRATUITO];
-        const orgActualizada = await this.prisma.organizacion.update({
-          where: { idOrganizacion: org.idOrganizacion },
-          data: {
-            plan: TipoPlan.GRATUITO,
-            limiteDocentes: limitesGratuito.limiteDocentes,
-            limiteEstudiantes: limitesGratuito.limiteEstudiantes,
-            limiteEvaluaciones: limitesGratuito.limiteEvaluaciones,
-            limiteCorreccionesIaMes: limitesGratuito.limiteCorreccionesIaMes,
-            diasCaducidadEvaluacion: 7,
-            esContenidoPrivado: false,
-          },
-        });
+        const orgActualizada = await this.prisma.$transaction((tx) =>
+          this.degradarOrganizacionAGratuito(tx, org.idOrganizacion),
+        );
         // Refrescar entidad en memoria para que los checks subsecuentes utilicen las cuotas degradadas
         org.plan = orgActualizada.plan;
         org.limiteDocentes = orgActualizada.limiteDocentes;
@@ -802,6 +813,10 @@ export class PagosService {
         org.limiteCorreccionesIaMes = orgActualizada.limiteCorreccionesIaMes;
         org.diasCaducidadEvaluacion = orgActualizada.diasCaducidadEvaluacion;
         org.esContenidoPrivado = orgActualizada.esContenidoPrivado;
+        org.suscripcion.estado = EstadoSuscripcion.ACTIVA;
+        org.suscripcion.autoRenovar = false;
+        org.suscripcion.fechaFinPeriodo = null;
+        org.suscripcion.fechaFinGracia = null;
       }
     }
 
