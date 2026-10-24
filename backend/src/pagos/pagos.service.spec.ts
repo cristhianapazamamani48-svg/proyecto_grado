@@ -46,23 +46,28 @@ function makeVerificacion(overrides: Record<string, any> = {}) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 async function buildModule() {
+  const prismaMock: any = {
+    transaccionPago: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    suscripcionOrganizacion: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn().mockResolvedValue({ estado: 'ACTIVA' }), findFirst: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
+    organizacion: { findUnique: jest.fn(), update: jest.fn() },
+    eventoWebhook: {
+      create: jest.fn().mockResolvedValue({ idEventoWebhook: 1 }),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    $transaction: jest.fn(),
+  };
+  prismaMock.$transaction.mockImplementation((operaciones: any) => (
+    typeof operaciones === 'function' ? operaciones(prismaMock) : Promise.all(operaciones)
+  ));
+
   return Test.createTestingModule({
     providers: [
       PagosService,
       {
         provide: PrismaService,
-        useValue: {
-          transaccionPago: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-          suscripcionOrganizacion: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn().mockResolvedValue({ estado: 'ACTIVA' }), findFirst: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
-          organizacion: { findUnique: jest.fn(), update: jest.fn() },
-          eventoWebhook: {
-            create: jest.fn().mockResolvedValue({ idEventoWebhook: 1 }),
-            findUnique: jest.fn(),
-            update: jest.fn(),
-            updateMany: jest.fn(),
-          },
-          $transaction: jest.fn().mockResolvedValue([]),
-        },
+        useValue: prismaMock,
       },
       {
         provide: MockPaymentProvider,
@@ -109,6 +114,7 @@ describe('PagosService — procesarWebhook', () => {
   let prisma: PrismaService;
   let module: TestingModule;
   let mockProv: MockPaymentProvider;
+  let mpProv: MercadoPagoProvider;
   let ppProv: PayPalProvider;
 
   beforeEach(async () => {
@@ -116,6 +122,7 @@ describe('PagosService — procesarWebhook', () => {
     service = module.get(PagosService);
     prisma = module.get(PrismaService);
     mockProv = module.get(MockPaymentProvider);
+    mpProv = module.get(MercadoPagoProvider);
     ppProv = module.get(PayPalProvider);
   });
 
@@ -139,6 +146,83 @@ describe('PagosService — procesarWebhook', () => {
     );
     expect(prisma.transaccionPago.findFirst).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('procesa pendiente y aprobado de Mercado Pago con el mismo recurso como eventos distintos', async () => {
+    const body = { data: { id: 'mp_pago_1' } };
+    (mpProv.verificarWebhooks as jest.Mock)
+      .mockResolvedValueOnce(makeVerificacion({ estadoPago: 'PENDIENTE', evento: 'payment.updated' }))
+      .mockResolvedValueOnce(makeVerificacion({ estadoPago: 'APROBADO', evento: 'payment.updated' }));
+    (prisma.transaccionPago.findFirst as jest.Mock)
+      .mockResolvedValueOnce(makeTx({ proveedor: ProveedorPago.MERCADOPAGO }))
+      .mockResolvedValueOnce(makeTx({ proveedor: ProveedorPago.MERCADOPAGO }));
+
+    await expect(service.procesarWebhook(ProveedorPago.MERCADOPAGO, body, {})).resolves.toEqual(
+      { recibido: true, estado: 'PENDIENTE', idOrganizacion: 10 },
+    );
+    await expect(service.procesarWebhook(ProveedorPago.MERCADOPAGO, body, {})).resolves.toEqual(
+      { recibido: true, estado: 'APROBADO', idOrganizacion: 10 },
+    );
+
+    expect(prisma.eventoWebhook.create).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      data: expect.objectContaining({ idEventoExterno: 'mp_pago_1:PAYMENT.UPDATED:PENDIENTE' }),
+    }));
+    expect(prisma.eventoWebhook.create).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      data: expect.objectContaining({ idEventoExterno: 'mp_pago_1:PAYMENT.UPDATED:APROBADO' }),
+    }));
+  });
+
+  it('reclama un evento RECIBIDO abandonado, pero ignora uno reciente', async () => {
+    (mockProv.verificarWebhooks as jest.Mock).mockResolvedValue(makeVerificacion());
+    (prisma.eventoWebhook.create as jest.Mock).mockRejectedValue({ code: 'P2002' });
+    (prisma.eventoWebhook.findUnique as jest.Mock)
+      .mockResolvedValueOnce({
+        idEventoWebhook: 5,
+        estado: EstadoEventoWebhook.RECIBIDO,
+        creadoEn: new Date(Date.now() - 5 * 60 * 1000 - 1),
+      })
+      .mockResolvedValueOnce({
+        idEventoWebhook: 6,
+        estado: EstadoEventoWebhook.RECIBIDO,
+        creadoEn: new Date(Date.now() - 10 * 1000),
+      });
+    (prisma.eventoWebhook.updateMany as jest.Mock).mockResolvedValueOnce({ count: 1 });
+    (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(makeTx());
+
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'APROBADO', idOrganizacion: 10 },
+    );
+    await expect(service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {})).resolves.toEqual(
+      { recibido: true, estado: 'DUPLICADO' },
+    );
+    expect(prisma.eventoWebhook.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: expect.arrayContaining([
+          expect.objectContaining({ estado: EstadoEventoWebhook.RECIBIDO }),
+        ]),
+      }),
+    }));
+  });
+
+  it('dos eventos APROBADO distintos de la misma transacción activan una sola vez', async () => {
+    (mockProv.verificarWebhooks as jest.Mock)
+      .mockResolvedValueOnce(makeVerificacion({ evento: 'payment.approved' }))
+      .mockResolvedValueOnce(makeVerificacion({ evento: 'payment.completed' }));
+    (prisma.transaccionPago.findFirst as jest.Mock)
+      .mockResolvedValueOnce(makeTx())
+      .mockResolvedValueOnce(makeTx());
+    (prisma.transaccionPago.updateMany as jest.Mock)
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    await Promise.all([
+      service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, { idEventoExterno: 'evento_a' }, {}),
+      service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, { idEventoExterno: 'evento_b' }, {}),
+    ]);
+
+    expect(prisma.transaccionPago.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.suscripcionOrganizacion.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.organizacion.update).toHaveBeenCalledTimes(1);
   });
 
   it('procesa una sola vez dos webhooks simultáneos del mismo evento', async () => {
@@ -328,16 +412,19 @@ describe('PagosService — procesarWebhook', () => {
   });
 
   // ── Atomicidad: todo en una sola $transaction ───────────────────────────
-  it('ejecuta update TX + upsert suscripcion + update org en un único $transaction', async () => {
+  it('ejecuta transición de TX, suscripción y organización en un único $transaction', async () => {
     (mockProv.verificarWebhooks as jest.Mock).mockResolvedValueOnce(makeVerificacion());
     (prisma.transaccionPago.findFirst as jest.Mock).mockResolvedValueOnce(makeTx());
 
     await service.procesarWebhook(ProveedorPago.MOCK_SANDBOX, {}, {});
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    const args = (prisma.$transaction as jest.Mock).mock.calls[0][0];
-    expect(Array.isArray(args)).toBe(true);
-    expect(args.length).toBe(3);
+    expect(typeof (prisma.$transaction as jest.Mock).mock.calls[0][0]).toBe('function');
+    expect(prisma.transaccionPago.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { idTransaccion: 1, estado: EstadoPagoTransaccion.PENDIENTE },
+    }));
+    expect(prisma.suscripcionOrganizacion.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.organizacion.update).toHaveBeenCalledTimes(1);
   });
 
   // ── Estado PENDIENTE → no activa suscripción ───────────────────────────
@@ -474,8 +561,9 @@ describe('PagosService — Flujo integrado MP: checkout → preapproval → prim
     prisma   = mod.get(PrismaService);
     mockProv = mod.get(MockPaymentProvider);
     jest.clearAllMocks();
-    // $transaction resuelve la lista de promesas por defecto
-    (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) => Promise.all(ops));
+    (prisma.$transaction as jest.Mock).mockImplementation((operacion: any) => (
+      typeof operacion === 'function' ? operacion(prisma) : Promise.all(operacion)
+    ));
   });
 
   it('Paso 1 — checkout crea TX con external_reference local y estado PENDIENTE', () => {
@@ -558,11 +646,12 @@ describe('PagosService — Flujo integrado MP: checkout → preapproval → prim
     expect(result.estado).toBe('APROBADO');
     expect(result.idOrganizacion).toBe(10);
 
-    // Se llamó a la activación atómica ($transaction con 3 operaciones)
+    // Se llamó a la activación atómica en una transacción interactiva.
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    const ops = (prisma.$transaction as jest.Mock).mock.calls[0][0];
-    expect(Array.isArray(ops)).toBe(true);
-    expect(ops.length).toBe(3); // update TX + upsert suscripcion + update org
+    expect(typeof (prisma.$transaction as jest.Mock).mock.calls[0][0]).toBe('function');
+    expect(prisma.transaccionPago.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { idTransaccion: 100, estado: EstadoPagoTransaccion.PENDIENTE },
+    }));
   });
 
   it('Paso 3 alternativo — primer cobro rechazado: NO activa el plan, pone en período de gracia', async () => {

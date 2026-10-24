@@ -32,6 +32,7 @@ const PRECIOS_PLANES: Record<TipoPlan, { usd: number; bob: number }> = {
 };
 
 const TOLERANCIA_MONTO = { USD: 0.01, BOB: 0.1 } as const;
+const EVENTO_WEBHOOK_ABANDONADO_MS = Number(process.env.WEBHOOK_EVENTO_ABANDONADO_MS) || 5 * 60 * 1000;
 
 @Injectable()
 export class PagosService {
@@ -215,17 +216,30 @@ export class PagosService {
   }
 
   private obtenerIdEventoExterno(proveedor: ProveedorPago, body: any, verificacion: any): string {
-    // PayPal usa body.id; Mercado Pago body.data.id; Livees puede usar event_id o id.
-    // Si no existe ID nativo, la clave se deriva sin tiempo para permanecer idempotente.
-    const idNativo = proveedor === ProveedorPago.PAYPAL
-      ? body?.id
-      : proveedor === ProveedorPago.MERCADOPAGO
-        ? body?.data?.id || body?.id
-        : proveedor === ProveedorPago.LIVEES
-          ? body?.event_id || body?.data?.event_id || body?.transaction_id || body?.data?.id || body?.id
-          : body?.idEventoExterno || body?.event_id;
+    // PayPal expone body.id como identificador único del evento y se conserva tal cual.
+    // Mercado Pago notifica varias transiciones para un mismo recurso data.id; x-request-id
+    // participa en la firma, pero no es una clave de evento documentada para deduplicación.
+    // Livees no expone actualmente un ID de evento único documentado en este proveedor; por eso
+    // transaction_id/data.id se combina con evento y estado en lugar de usarse por sí solo.
+    const evento = String(verificacion.evento || 'evento').toUpperCase();
+    const estado = String(verificacion.estadoPago || 'PENDIENTE').toUpperCase();
+    if (proveedor === ProveedorPago.PAYPAL && body?.id) {
+      return String(body.id).slice(0, 150);
+    }
+
+    const idRecurso = proveedor === ProveedorPago.MERCADOPAGO
+      ? body?.data?.id || body?.id
+      : proveedor === ProveedorPago.LIVEES
+        ? body?.transaction_id || body?.data?.id || body?.id
+        : body?.idEventoExterno || body?.event_id;
+
+    if (idRecurso && (proveedor === ProveedorPago.MERCADOPAGO || proveedor === ProveedorPago.LIVEES)) {
+      return `${idRecurso}:${evento}:${estado}`.slice(0, 150);
+    }
+
+    // Para los proveedores internos, la clave también se deriva sin hora de llegada.
     const idDerivado = `${verificacion.idTransaccionExterna || verificacion.idSuscripcionExterna || 'sin-id'}:${verificacion.evento || 'evento'}:${verificacion.estadoPago || 'PENDIENTE'}`;
-    return String(idNativo || idDerivado).slice(0, 150);
+    return String(idRecurso || idDerivado).slice(0, 150);
   }
 
   private async registrarOReclamarEvento(
@@ -245,12 +259,21 @@ export class PagosService {
       const existente = await this.prisma.eventoWebhook.findUnique({
         where: { proveedor_idEventoExterno: { proveedor, idEventoExterno } },
       });
-      if (!existente || existente.estado !== EstadoEventoWebhook.ERROR) {
+      const limiteAbandono = new Date(Date.now() - EVENTO_WEBHOOK_ABANDONADO_MS);
+      const recibidoAbandonado = existente?.estado === EstadoEventoWebhook.RECIBIDO
+        && existente.creadoEn < limiteAbandono;
+      if (!existente || (existente.estado !== EstadoEventoWebhook.ERROR && !recibidoAbandonado)) {
         return { idEventoWebhook: existente?.idEventoWebhook || 0, procesar: false };
       }
 
       const reclamo = await this.prisma.eventoWebhook.updateMany({
-        where: { idEventoWebhook: existente.idEventoWebhook, estado: EstadoEventoWebhook.ERROR },
+        where: {
+          idEventoWebhook: existente.idEventoWebhook,
+          OR: [
+            { estado: EstadoEventoWebhook.ERROR },
+            { estado: EstadoEventoWebhook.RECIBIDO, creadoEn: { lt: limiteAbandono } },
+          ],
+        },
         data: { estado: EstadoEventoWebhook.RECIBIDO, error: null, procesadoEn: null },
       });
       return { idEventoWebhook: existente.idEventoWebhook, procesar: reclamo.count === 1 };
@@ -546,34 +569,31 @@ export class PagosService {
   // HELPERS ATÓMICOS
   // ─────────────────────────────────────────────────────────────────
   private async aprobarTransaccionAtomica(tx: any, proveedorNombre: ProveedorPago, idSuscripcionExterna?: string, idCobroRecibido?: string) {
-    const subActual = await this.prisma.suscripcionOrganizacion.findUnique({
-      where: { idOrganizacion: tx.idOrganizacion },
-    });
-
-    const fechaInicio = new Date();
-    const fechaFinPeriodo = new Date();
-
-    if (subActual?.estado === EstadoSuscripcion.ACTIVA && subActual.fechaFinPeriodo && subActual.fechaFinPeriodo > new Date()) {
-      // Extender 30 días exactos desde la fecha de expiración actual si aún está activa
-      fechaFinPeriodo.setTime(subActual.fechaFinPeriodo.getTime());
-      fechaFinPeriodo.setDate(fechaFinPeriodo.getDate() + 30);
-    } else {
-      // Si estaba vencida, cancelada o en gracia, extender 30 días desde hoy
-      fechaFinPeriodo.setDate(fechaFinPeriodo.getDate() + 30);
-    }
-
-    const planAprobado: TipoPlan = tx.plan || TipoPlan.MAESTRO_PRO;
-    const limitesPlan = LIMITES_PREDETERMINADOS[planAprobado] || LIMITES_PREDETERMINADOS.MAESTRO_PRO;
-
-    await this.prisma.$transaction([
-      this.prisma.transaccionPago.update({
-        where: { idTransaccion: tx.idTransaccion },
+    const activada = await this.prisma.$transaction(async (db) => {
+      // Solo quien mueve PENDIENTE -> APROBADO puede activar o extender el plan.
+      const transicion = await db.transaccionPago.updateMany({
+        where: { idTransaccion: tx.idTransaccion, estado: EstadoPagoTransaccion.PENDIENTE },
         data: {
           estado: EstadoPagoTransaccion.APROBADO,
           firmaWebhook: `${proveedorNombre}:${idCobroRecibido || tx.idTransaccionExterna}`.slice(0, 250),
         },
-      }),
-      this.prisma.suscripcionOrganizacion.upsert({
+      });
+      if (transicion.count !== 1) return false;
+
+      const subActual = await db.suscripcionOrganizacion.findUnique({
+        where: { idOrganizacion: tx.idOrganizacion },
+      });
+      const fechaInicio = new Date();
+      const fechaFinPeriodo = new Date();
+      if (subActual?.estado === EstadoSuscripcion.ACTIVA && subActual.fechaFinPeriodo && subActual.fechaFinPeriodo > new Date()) {
+        fechaFinPeriodo.setTime(subActual.fechaFinPeriodo.getTime());
+      }
+      fechaFinPeriodo.setDate(fechaFinPeriodo.getDate() + 30);
+
+      const planAprobado: TipoPlan = tx.plan || TipoPlan.MAESTRO_PRO;
+      const limitesPlan = LIMITES_PREDETERMINADOS[planAprobado] || LIMITES_PREDETERMINADOS.MAESTRO_PRO;
+
+      await db.suscripcionOrganizacion.upsert({
         where: { idOrganizacion: tx.idOrganizacion },
         create: {
           idOrganizacion: tx.idOrganizacion,
@@ -600,8 +620,8 @@ export class PagosService {
           fechaFinGracia: null,
           autoRenovar: true,
         },
-      }),
-      this.prisma.organizacion.update({
+      });
+      await db.organizacion.update({
         where: { idOrganizacion: tx.idOrganizacion },
         data: {
           plan: planAprobado,
@@ -613,10 +633,14 @@ export class PagosService {
           esContenidoPrivado: planAprobado !== TipoPlan.GRATUITO,
           iaHabilitada: true,
         },
-      }),
-    ]);
+      });
+      return true;
+    });
 
-    this.logger.log(`[Suscripción Activada] Institución ${tx.idOrganizacion} actualizada a Plan ${planAprobado}.`);
+    if (activada) {
+      this.logger.log(`[Suscripción Activada] Institución ${tx.idOrganizacion} actualizada a Plan ${tx.plan || TipoPlan.MAESTRO_PRO}.`);
+    }
+    return activada;
   }
 
   private async rechazarTransaccionAtomica(tx: any, motivoFallo?: string, idCobroRecibido?: string) {
