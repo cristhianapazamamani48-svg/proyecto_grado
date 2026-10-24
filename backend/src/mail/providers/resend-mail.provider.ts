@@ -6,6 +6,8 @@ export class ResendMailProvider implements MailProvider {
   readonly nombreProveedor = 'resend' as const;
 
   async send(message: MailMessage): Promise<void> {
+    const configuredTimeout = Number(process.env.MAIL_TIMEOUT_MS || 10_000);
+    const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 10_000;
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -19,6 +21,7 @@ export class ResendMailProvider implements MailProvider {
         html: message.html,
         text: message.text,
       }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!response.ok) {

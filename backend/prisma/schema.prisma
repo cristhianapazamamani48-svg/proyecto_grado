@@ -528,11 +528,12 @@ model AvisoVencimiento {
   idOrganizacion     Int      @map("id_organizacion")
   fechaFinPeriodo    DateTime @map("fecha_fin_periodo")
   diasAntes          Int      @map("dias_antes")
+  correoDestinatario String   @map("correo_destinatario") @db.VarChar(150)
   enviadoEn          DateTime @default(now()) @map("enviado_en")
 
   organizacion Organizacion @relation(fields: [idOrganizacion], references: [idOrganizacion], onDelete: Cascade, onUpdate: Cascade)
 
-  @@unique([idOrganizacion, fechaFinPeriodo, diasAntes], map: "uq_aviso_vencimiento")
+  @@unique([idOrganizacion, fechaFinPeriodo, diasAntes, correoDestinatario], map: "uq_aviso_vencimiento_destinatario")
   @@map("aviso_vencimiento")
 }
 

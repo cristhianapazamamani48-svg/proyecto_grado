@@ -129,6 +129,13 @@ export class PagosController {
     return this.pagosService.obtenerSuscripcionOrg(idOrganizacion);
   }
 
+  @Get('precios')
+  @UseGuards(AuthGuard('jwt'))
+  obtenerPrecios(@Request() req: any) {
+    this.requiereUsuario(req);
+    return this.pagosService.obtenerPrecios();
+  }
+
   @Post('cancelar')
   @UseGuards(AuthGuard('jwt'))
   async cancelarSuscripcion(@Request() req: any) {

@@ -619,7 +619,7 @@ describe('PagosService — períodos prepagados y avisos', () => {
     }));
   });
 
-  it('no duplica avisos y no avisa planes gratuitos', async () => {
+  it('reintenta solo al administrador cuyo aviso falló y no avisa planes gratuitos', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-01-01T15:00:00.000Z'));
     const vencimiento = new Date('2026-01-08T15:00:00.000Z');
     (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValue([
@@ -628,14 +628,41 @@ describe('PagosService — períodos prepagados y avisos', () => {
     ]);
     (prisma.avisoVencimiento.create as jest.Mock)
       .mockResolvedValueOnce({ idAvisoVencimiento: 1 })
-      .mockRejectedValueOnce({ code: 'P2002' });
-    (prisma.membresia.findMany as jest.Mock).mockResolvedValue([{ usuario: { correo: 'admin@example.test', nombre: 'Ana', apellido: 'Admin' } }]);
+      .mockResolvedValueOnce({ idAvisoVencimiento: 2 })
+      .mockRejectedValueOnce({ code: 'P2002' })
+      .mockResolvedValueOnce({ idAvisoVencimiento: 3 });
+    (prisma.membresia.findMany as jest.Mock).mockResolvedValue([
+      { usuario: { correo: 'ana@example.test', nombre: 'Ana', apellido: 'Admin' } },
+      { usuario: { correo: 'beto@example.test', nombre: 'Beto', apellido: 'Admin' } },
+    ]);
+    mail.enviarAvisoVencimiento
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
 
     await service.enviarAvisosVencimiento();
     await service.enviarAvisosVencimiento();
 
-    expect(mail.enviarAvisoVencimiento).toHaveBeenCalledTimes(1);
-    expect(prisma.avisoVencimiento.create).toHaveBeenCalledTimes(2);
+    expect(mail.enviarAvisoVencimiento).toHaveBeenCalledTimes(3);
+    expect(mail.enviarAvisoVencimiento).toHaveBeenNthCalledWith(1, expect.objectContaining({ to: 'ana@example.test' }));
+    expect(mail.enviarAvisoVencimiento).toHaveBeenNthCalledWith(3, expect.objectContaining({ to: 'beto@example.test' }));
+    expect(prisma.avisoVencimiento.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ correoDestinatario: 'beto@example.test' }),
+    }));
+    jest.useRealTimers();
+  });
+
+  it('no crea avisos si no hay administradores activos', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-01-01T15:00:00.000Z'));
+    (prisma.suscripcionOrganizacion.findMany as jest.Mock).mockResolvedValue([
+      { idOrganizacion: 10, plan: TipoPlan.MAESTRO_PRO, estado: EstadoSuscripcion.ACTIVA, proveedor: ProveedorPago.LIVEES, autoRenovar: false, fechaFinPeriodo: new Date('2026-01-08T15:00:00.000Z') },
+    ]);
+    (prisma.membresia.findMany as jest.Mock).mockResolvedValue([]);
+
+    await service.enviarAvisosVencimiento();
+
+    expect(prisma.avisoVencimiento.create).not.toHaveBeenCalled();
+    expect(mail.enviarAvisoVencimiento).not.toHaveBeenCalled();
     jest.useRealTimers();
   });
 
@@ -650,6 +677,18 @@ describe('PagosService — períodos prepagados y avisos', () => {
     await expect((service as any).aprobarTransaccionAtomica(makeTx(), ProveedorPago.LIVEES)).resolves.toBe(false);
     expect(mail.enviarReciboPago).toHaveBeenCalledTimes(1);
     expect(prisma.suscripcionOrganizacion.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('no espera un recibo pendiente para completar la activación', async () => {
+    let resolverCorreo: (() => void) | undefined;
+    mail.enviarReciboPago.mockImplementation(() => new Promise<void>((resolve) => { resolverCorreo = resolve; }));
+    (prisma.membresia.findMany as jest.Mock).mockResolvedValue([{ usuario: { correo: 'admin@example.test', nombre: 'Ana', apellido: 'Admin' } }]);
+
+    await expect((service as any).aprobarTransaccionAtomica(makeTx(), ProveedorPago.LIVEES)).resolves.toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mail.enviarReciboPago).toHaveBeenCalledTimes(1);
+    resolverCorreo?.();
   });
 });
 

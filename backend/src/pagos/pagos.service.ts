@@ -81,6 +81,18 @@ export class PagosService {
     };
   }
 
+  obtenerPrecios() {
+    const periodos = [1, 3, 12];
+    return {
+      planes: Object.values(TipoPlan)
+        .filter((plan) => plan !== TipoPlan.GRATUITO)
+        .map((plan) => ({
+          plan,
+          periodos: periodos.map((periodoMeses) => ({ periodoMeses, ...this.preciosPeriodo(plan, periodoMeses) })),
+        })),
+    };
+  }
+
   // ─────────────────────────────────────────────────────────────────
   // CREAR SESIÓN DE CHECKOUT (MOCK / MERCADOPAGO / PAYPAL)
   // ─────────────────────────────────────────────────────────────────
@@ -676,7 +688,9 @@ export class PagosService {
 
     if (activada) {
       this.logger.log(`[Suscripción Activada] Institución ${tx.idOrganizacion} actualizada a Plan ${tx.plan || TipoPlan.MAESTRO_PRO}.`);
-      await this.enviarRecibosPago(tx, periodoCubierto!);
+      void this.enviarRecibosPago(tx, periodoCubierto!).catch((error) => {
+        this.logger.error(`[Recibo] Error no controlado al notificar el pago ${tx.idTransaccion}.`, error);
+      });
     }
     return activada;
   }
@@ -804,24 +818,10 @@ export class PagosService {
 
     for (const suscripcion of suscripciones) {
       if (suscripcion.plan === TipoPlan.GRATUITO || !suscripcion.fechaFinPeriodo || this.esRenovacionRecurrente(suscripcion)) continue;
-      const diasAntes = this.diasCalendarioLaPazHasta(suscripcion.fechaFinPeriodo);
-      if (![7, 3, 1].includes(diasAntes)) continue;
+      const diasRestantes = this.diasCalendarioLaPazHasta(suscripcion.fechaFinPeriodo);
+      if (diasRestantes < 1 || diasRestantes > 7) continue;
+      const umbralesPendientes = [7, 3, 1].filter((umbral) => diasRestantes <= umbral);
 
-      try {
-        await this.prisma.avisoVencimiento.create({
-          data: {
-            idOrganizacion: suscripcion.idOrganizacion,
-            fechaFinPeriodo: suscripcion.fechaFinPeriodo,
-            diasAntes,
-          },
-        });
-      } catch (error: any) {
-        if (error?.code === 'P2002') continue;
-        this.logger.error(`[Aviso vencimiento] No se pudo reservar aviso para org ${suscripcion.idOrganizacion}.`, error);
-        continue;
-      }
-
-      let enviado = false;
       try {
         const administradores = await this.prisma.membresia.findMany({
           where: {
@@ -831,31 +831,57 @@ export class PagosService {
           },
           include: { usuario: true },
         });
+        if (administradores.length === 0) continue;
         const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3002').replace(/\/$/, '');
         const fechaVencimiento = new Intl.DateTimeFormat('es-BO', {
           dateStyle: 'medium', timeZone: 'America/La_Paz',
         }).format(suscripcion.fechaFinPeriodo);
-        const resultados = await Promise.all(administradores.map((membresia) => this.mailService.enviarAvisoVencimiento({
-          to: membresia.usuario.correo,
-          nombre: `${membresia.usuario.nombre} ${membresia.usuario.apellido}`,
-          plan: suscripcion.plan,
-          diasRestantes: diasAntes,
-          fechaVencimiento,
-          enlaceRenovacion: `${frontendUrl}/docente/organizacion?tab=suscripcion`,
-        })));
-        enviado = administradores.length > 0 && resultados.every(Boolean);
+
+        for (const diasAntes of umbralesPendientes) {
+          for (const membresia of administradores) {
+            const correoDestinatario = membresia.usuario.correo;
+            try {
+              await this.prisma.avisoVencimiento.create({
+                data: {
+                  idOrganizacion: suscripcion.idOrganizacion,
+                  fechaFinPeriodo: suscripcion.fechaFinPeriodo,
+                  diasAntes,
+                  correoDestinatario,
+                },
+              });
+            } catch (error: any) {
+              if (error?.code === 'P2002') continue;
+              this.logger.error(`[Aviso vencimiento] No se pudo reservar aviso para ${correoDestinatario}.`, error);
+              continue;
+            }
+
+            let enviado = false;
+            try {
+              enviado = await this.mailService.enviarAvisoVencimiento({
+                to: correoDestinatario,
+                nombre: `${membresia.usuario.nombre} ${membresia.usuario.apellido}`,
+                plan: suscripcion.plan,
+                diasRestantes,
+                fechaVencimiento,
+                enlaceRenovacion: `${frontendUrl}/docente/organizacion?tab=suscripcion`,
+              });
+            } catch (error) {
+              this.logger.error(`[Aviso vencimiento] Falló el correo para ${correoDestinatario}.`, error);
+            }
+            if (!enviado) {
+              await this.prisma.avisoVencimiento.deleteMany({
+                where: {
+                  idOrganizacion: suscripcion.idOrganizacion,
+                  fechaFinPeriodo: suscripcion.fechaFinPeriodo,
+                  diasAntes,
+                  correoDestinatario,
+                },
+              });
+            }
+          }
+        }
       } catch (error) {
         this.logger.error(`[Aviso vencimiento] Falló el envío para org ${suscripcion.idOrganizacion}.`, error);
-      }
-
-      if (!enviado) {
-        await this.prisma.avisoVencimiento.deleteMany({
-          where: {
-            idOrganizacion: suscripcion.idOrganizacion,
-            fechaFinPeriodo: suscripcion.fechaFinPeriodo,
-            diasAntes,
-          },
-        });
       }
     }
   }

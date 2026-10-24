@@ -17,6 +17,8 @@ export default function DocenteOrganizacionPage() {
   const [invitaciones, setInvitaciones] = useState<any[]>([]);
   const [usoIa, setUsoIa] = useState<any>(null);
   const [suscripcion, setSuscripcion] = useState<any>(null);
+  const [precios, setPrecios] = useState<any>(null);
+  const [periodoMeses, setPeriodoMeses] = useState<1 | 3 | 12>(1);
   const [cargando, setCargando] = useState(true);
   const [cargandoCheckout, setCargandoCheckout] = useState(false);
   const [aprobandoPagoSandbox, setAprobandoPagoSandbox] = useState(false);
@@ -51,12 +53,13 @@ export default function DocenteOrganizacionPage() {
     try {
       const headers = { Authorization: `Bearer ${token}` };
 
-      const [resOrg, resMiembros, resInv, resIa, resSub] = await Promise.all([
+      const [resOrg, resMiembros, resInv, resIa, resSub, resPrecios] = await Promise.all([
         fetch(`${API}/organizaciones/mi-organizacion`, { headers }),
         fetch(`${API}/organizaciones/mi-organizacion/miembros`, { headers }),
         fetch(`${API}/organizaciones/mi-organizacion/invitaciones`, { headers }),
         fetch(`${API}/organizaciones/mi-organizacion/uso-ia`, { headers }),
         fetch(`${API}/pagos/mi-suscripcion`, { headers }),
+        fetch(`${API}/pagos/precios`, { headers }),
       ]);
 
       if (resOrg.ok) {
@@ -69,6 +72,7 @@ export default function DocenteOrganizacionPage() {
       if (resInv.ok) setInvitaciones(await resInv.json());
       if (resIa.ok) setUsoIa(await resIa.json());
       if (resSub.ok) setSuscripcion(await resSub.json());
+      if (resPrecios.ok) setPrecios(await resPrecios.json());
     } catch (err) {
       mostrarMensaje('error', 'Error al cargar información de la organización.');
     } finally {
@@ -269,7 +273,11 @@ export default function DocenteOrganizacionPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ plan: 'MAESTRO_PRO', proveedor }),
+        body: JSON.stringify({
+          plan: 'MAESTRO_PRO',
+          proveedor,
+          periodoMeses: proveedor === 'LIVEES' || proveedor === 'MOCK_SANDBOX' ? periodoMeses : 1,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -593,15 +601,55 @@ export default function DocenteOrganizacionPage() {
                   </div>
                 )}
 
+                <div className="rounded-xl border border-blue-200 bg-white/80 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">Pago único</p>
+                      <p className="text-xs text-slate-500">QR Simple y Sandbox permiten prepagar varios meses.</p>
+                    </div>
+                    <label className="text-sm font-semibold text-slate-700">
+                      Período
+                      <select
+                        value={periodoMeses}
+                        onChange={(event) => setPeriodoMeses(Number(event.target.value) as 1 | 3 | 12)}
+                        className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800"
+                      >
+                        <option value={1}>1 mes</option>
+                        <option value={3}>3 meses</option>
+                        <option value={12}>12 meses</option>
+                      </select>
+                    </label>
+                  </div>
+                  {(() => {
+                    const plan = precios?.planes?.find((item: any) => item.plan === 'MAESTRO_PRO');
+                    const precio = plan?.periodos?.find((item: any) => item.periodoMeses === periodoMeses);
+                    return precio ? (
+                      <p className="text-sm text-blue-800">
+                        Total: <strong>Bs {Number(precio.bob).toFixed(2)}</strong>
+                        <span className="text-slate-500"> (${Number(precio.usd).toFixed(2)} USD)</span>
+                      </p>
+                    ) : null;
+                  })()}
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={() => handleCrearCheckout('LIVEES')}
+                      disabled={cargandoCheckout}
+                      className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center gap-2 cursor-pointer"
+                    >
+                      <span>🇧🇴</span>
+                      <span>{cargandoCheckout ? 'Iniciando...' : 'Pagar en Bolivia (QR Simple / Yape / Tarjetas)'}</span>
+                    </button>
+                    <button
+                      onClick={() => handleCrearCheckout('MOCK_SANDBOX')}
+                      disabled={cargandoCheckout}
+                      className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 text-slate-700 font-medium text-xs rounded-xl transition cursor-pointer"
+                    >
+                      🧪 Sandbox Demo
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex flex-wrap gap-3 pt-2">
-                  <button
-                    onClick={() => handleCrearCheckout('LIVEES')}
-                    disabled={cargandoCheckout}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center gap-2 cursor-pointer"
-                  >
-                    <span>🇧🇴</span>
-                    <span>{cargandoCheckout ? 'Iniciando...' : 'Pagar en Bolivia (QR Simple / Yape / Tarjetas)'}</span>
-                  </button>
                   <button
                     onClick={() => handleCrearCheckout('MERCADOPAGO')}
                     disabled={cargandoCheckout}
@@ -615,13 +663,6 @@ export default function DocenteOrganizacionPage() {
                     className="px-5 py-2.5 bg-yellow-400 hover:bg-yellow-500 disabled:opacity-50 text-slate-900 font-semibold text-sm rounded-xl shadow transition cursor-pointer"
                   >
                     🅿 PayPal (USD)
-                  </button>
-                  <button
-                    onClick={() => handleCrearCheckout('MOCK_SANDBOX')}
-                    disabled={cargandoCheckout}
-                    className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 text-slate-700 font-medium text-xs rounded-xl transition cursor-pointer"
-                  >
-                    🧪 Sandbox Demo
                   </button>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 bg-white/70 p-3 rounded-xl border border-slate-200">
