@@ -24,9 +24,24 @@ export class LibelulaProvider implements PaymentProvider, OnModuleInit {
     return (process.env.LIBELULA_API_URL || 'https://api.libelula.bo').replace(/\/$/, '');
   }
 
+  private get timeoutMs() {
+    const configured = Number(process.env.LIBELULA_TIMEOUT_MS || 15_000);
+    return Number.isFinite(configured) && configured > 0 ? configured : 15_000;
+  }
+
   onModuleInit() {
-    if ((process.env.PAYMENT_PROVIDER || '').toUpperCase() === ProveedorPago.LIBELULA && !process.env.LIBELULA_APPKEY) {
+    const usaLibelula = (process.env.PAYMENT_PROVIDER || '').toUpperCase() === ProveedorPago.LIBELULA;
+    const tieneAppkey = Boolean(process.env.LIBELULA_APPKEY);
+    if (usaLibelula && !tieneAppkey) {
       throw new Error('PAYMENT_PROVIDER=LIBELULA requiere LIBELULA_APPKEY.');
+    }
+    if (process.env.NODE_ENV === 'production' && (usaLibelula || tieneAppkey)) {
+      const callbackUrl = process.env.LIBELULA_CALLBACK_URL;
+      let url: URL | undefined;
+      try { url = callbackUrl ? new URL(callbackUrl) : undefined; } catch { /* validación abajo */ }
+      if (!url || url.protocol !== 'https:' || url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1') {
+        throw new Error('Libélula en producción requiere LIBELULA_CALLBACK_URL pública con HTTPS y sin localhost.');
+      }
     }
   }
 
@@ -72,6 +87,7 @@ export class LibelulaProvider implements PaymentProvider, OnModuleInit {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
       throw new Error('No se pudo conectar con Libélula para registrar la deuda.');
@@ -100,6 +116,7 @@ export class LibelulaProvider implements PaymentProvider, OnModuleInit {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ appkey: this.appkey(), identificador }),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
       throw new Error('No se pudo consultar el estado de la deuda en Libélula.');

@@ -45,6 +45,7 @@ const PROVEEDORES_RECURRENTES: ProveedorPago[] = [ProveedorPago.PAYPAL, Proveedo
 export class PagosService {
   private readonly logger = new Logger(PagosService.name);
   private providers: Map<ProveedorPago, PaymentProvider> = new Map();
+  private conciliacionLibelulaEnProgreso = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -688,18 +689,31 @@ export class PagosService {
 
   @Cron('0 */10 * * * *', { timeZone: 'America/La_Paz' })
   async conciliarPagosLibelulaPendientes() {
+    if (this.conciliacionLibelulaEnProgreso) {
+      this.logger.warn('[Libélula] Conciliación omitida: una ejecución anterior sigue en curso.');
+      return;
+    }
+    this.conciliacionLibelulaEnProgreso = true;
     const dias = Number(process.env.LIBELULA_DEUDA_DIAS || 3);
     const desde = new Date();
     desde.setDate(desde.getDate() - ((Number.isFinite(dias) && dias > 0 ? dias : 3) + 1));
-    const pendientes = await this.prisma.transaccionPago.findMany({
-      where: {
-        proveedor: ProveedorPago.LIBELULA,
-        estado: EstadoPagoTransaccion.PENDIENTE,
-        fechaTransaccion: { gte: desde },
-      },
-    });
-    for (const tx of pendientes) {
-      await this.conciliarTransaccionLibelula(tx);
+    try {
+      // Esta bandera protege un proceso. Con varias instancias se requiere un bloqueo
+      // distribuido (p. ej. pg_advisory_lock) antes de recorrer el lote.
+      const pendientes = await this.prisma.transaccionPago.findMany({
+        where: {
+          proveedor: ProveedorPago.LIBELULA,
+          estado: EstadoPagoTransaccion.PENDIENTE,
+          fechaTransaccion: { gte: desde },
+        },
+        orderBy: { fechaTransaccion: 'asc' },
+        take: 50,
+      });
+      for (const tx of pendientes) {
+        await this.conciliarTransaccionLibelula(tx);
+      }
+    } finally {
+      this.conciliacionLibelulaEnProgreso = false;
     }
   }
 

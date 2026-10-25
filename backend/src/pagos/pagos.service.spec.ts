@@ -51,7 +51,7 @@ function makeVerificacion(overrides: Record<string, any> = {}) {
 
 async function buildModule() {
   const prismaMock: any = {
-    transaccionPago: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    transaccionPago: { findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]), update: jest.fn(), create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     usuario: { findUnique: jest.fn() },
     suscripcionOrganizacion: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn().mockResolvedValue({ estado: 'ACTIVA' }), findFirst: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
     organizacion: { findUnique: jest.fn(), update: jest.fn() },
@@ -597,6 +597,26 @@ describe('PagosService — callback Libélula', () => {
     await service.procesarCallbackLibelula('lib-tx', 'correcto');
     expect(prisma.transaccionPago.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ estado: EstadoPagoTransaccion.EN_REVISION }) }));
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('PagosService — cron de conciliación Libélula', () => {
+  it('no solapa ejecuciones y limita el lote a 50 transacciones', async () => {
+    const module = await buildModule();
+    const service = module.get(PagosService);
+    const prisma: any = module.get(PrismaService);
+    let liberar!: () => void;
+    const espera = new Promise<void>((resolve) => { liberar = resolve; });
+    prisma.transaccionPago.findMany.mockResolvedValue([makeTx({ proveedor: ProveedorPago.LIBELULA })]);
+    jest.spyOn(service as any, 'conciliarTransaccionLibelula').mockImplementation(() => espera);
+
+    const primera = service.conciliarPagosLibelulaPendientes();
+    await Promise.resolve();
+    await service.conciliarPagosLibelulaPendientes();
+    expect(prisma.transaccionPago.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.transaccionPago.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 50, orderBy: { fechaTransaccion: 'asc' } }));
+    liberar();
+    await primera;
   });
 });
 
