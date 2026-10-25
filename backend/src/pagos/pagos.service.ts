@@ -12,6 +12,8 @@ import { MockPaymentProvider } from './providers/mock-payment.provider';
 import { MercadoPagoProvider } from './providers/mercadopago.provider';
 import { PayPalProvider } from './providers/paypal.provider';
 import { LiveesProvider } from './providers/livees.provider';
+import { LibelulaProvider } from './providers/libelula.provider';
+import * as crypto from 'crypto';
 import { PaymentProvider, CheckoutParams } from './interfaces/payment-provider.interface';
 import { LIMITES_PREDETERMINADOS } from '../superadmin/superadmin.service';
 import { MailService } from '../mail/mail.service';
@@ -50,12 +52,14 @@ export class PagosService {
     private readonly mpProvider: MercadoPagoProvider,
     private readonly paypalProvider: PayPalProvider,
     private readonly liveesProvider: LiveesProvider,
+    private readonly libelulaProvider: LibelulaProvider,
     private readonly mailService: MailService,
   ) {
     this.providers.set(ProveedorPago.MOCK_SANDBOX, this.mockProvider);
     this.providers.set(ProveedorPago.MERCADOPAGO, this.mpProvider);
     this.providers.set(ProveedorPago.PAYPAL, this.paypalProvider);
     this.providers.set(ProveedorPago.LIVEES, this.liveesProvider);
+    this.providers.set(ProveedorPago.LIBELULA, this.libelulaProvider);
   }
 
   private getProvider(nombre?: ProveedorPago): PaymentProvider {
@@ -123,6 +127,41 @@ export class PagosService {
     const precios = this.preciosPeriodo(planDeseado, periodoMeses);
 
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+    let transaccionLibelula: any;
+    let tokenCallback: string | undefined;
+    let identificadorDeuda: string | undefined;
+
+    // Libélula exige que la deuda tenga una referencia local. Primero se crea la
+    // transacción pendiente para derivar UUB-<id> y nunca usar datos adivinables.
+    if (provider.nombreProveedor === ProveedorPago.LIBELULA) {
+      tokenCallback = crypto.randomBytes(32).toString('hex');
+      const tokenCallbackHash = crypto.createHash('sha256').update(tokenCallback).digest('hex');
+      transaccionLibelula = await this.prisma.transaccionPago.create({
+        data: {
+          idOrganizacion,
+          monto: precios.usd,
+          moneda: 'USD',
+          montoLocal: precios.bob,
+          monedaLocal: 'BOB',
+          estado: EstadoPagoTransaccion.PENDIENTE,
+          plan: planDeseado,
+          periodoMeses,
+          proveedor: ProveedorPago.LIBELULA,
+          tokenCallbackHash,
+        },
+      });
+      identificadorDeuda = `UUB-${transaccionLibelula.idTransaccion}`;
+      await this.prisma.transaccionPago.update({
+        where: { idTransaccion: transaccionLibelula.idTransaccion },
+        data: { identificadorLibelula: identificadorDeuda },
+      });
+    }
+    const callbackBase = (process.env.LIBELULA_CALLBACK_URL || `http://localhost:${process.env.PORT || 3001}`).replace(/\/$/, '');
+    const emiteFactura = process.env.LIBELULA_EMITE_FACTURA === 'true';
+    if (emiteFactura) {
+      // La organización aún no persiste NIT/CI ni razón social: no enviar datos fiscales incompletos.
+      this.logger.warn('[Libélula] Facturación solicitada pero la organización no tiene datos fiscales almacenados; se omitirá.');
+    }
     const params: CheckoutParams = {
       idOrganizacion,
       idUsuario,
@@ -134,18 +173,39 @@ export class PagosService {
       nombreUsuario: `${usuario.nombre} ${usuario.apellido}`,
       urlRetornoSuccess: `${frontendUrl}/docente/organizacion?tab=suscripcion&pago=exito`,
       urlRetornoCancel: `${frontendUrl}/docente/organizacion?tab=suscripcion&pago=cancelado`,
+      idTransaccion: transaccionLibelula?.idTransaccion,
+      identificadorDeuda,
+      callbackUrl: tokenCallback ? `${callbackBase}/pagos/webhook/libelula?ref=${tokenCallback}` : undefined,
+      emiteFactura: false,
+      periodoMeses,
     };
 
     let checkoutResult;
     try {
       checkoutResult = await provider.crearSesionCheckout(params);
     } catch (e: any) {
+      if (transaccionLibelula) {
+        await this.prisma.transaccionPago.update({
+          where: { idTransaccion: transaccionLibelula.idTransaccion },
+          data: { estado: EstadoPagoTransaccion.RECHAZADO, detalleError: String(e?.message || 'Error al registrar deuda').slice(0, 2000) },
+        });
+      }
       this.logger.error(`Error al iniciar checkout con ${provider.nombreProveedor}:`, e);
       throw new BadRequestException(e.message || 'Error al iniciar la sesión de pago. Verifica que las credenciales estén configuradas.');
     }
 
-    // Registrar transacción pendiente
-    const transaccion = await this.prisma.transaccionPago.create({
+    // Libélula ya creó la transacción para obtener el identificador de deuda.
+    const transaccion = transaccionLibelula
+      ? await this.prisma.transaccionPago.update({
+        where: { idTransaccion: transaccionLibelula.idTransaccion },
+        data: {
+          idTransaccionExterna: checkoutResult.idTransaccionExterna,
+          metodoPago: checkoutResult.metodoPago,
+          urlCheckout: checkoutResult.urlCheckout,
+          qrSimpleUrl: checkoutResult.qrSimpleUrl,
+        },
+      })
+      : await this.prisma.transaccionPago.create({
       data: {
         idOrganizacion,
         monto: precios.usd,
@@ -171,6 +231,7 @@ export class PagosService {
       montoLocal: precios.bob,
       monedaLocal: 'BOB',
       periodoMeses,
+      qrSimpleUrl: checkoutResult.qrSimpleUrl,
     };
   }
 
@@ -495,7 +556,7 @@ export class PagosService {
     // Para una aprobación, monto y moneda son obligatorios. La tolerancia
     // cubre redondeo del proveedor: 0.01 USD o 0.10 BOB, sin conversión implícita.
     if (verificacion.estadoPago === 'APROBADO') {
-      if (verificacion.monto === undefined || verificacion.monto === null || !verificacion.moneda) {
+      if (verificacion.monto === undefined || verificacion.monto === null || !Number.isFinite(Number(verificacion.monto)) || !verificacion.moneda) {
         await this.marcarPagoEnRevision(tx, 'Aprobación sin monto o moneda verificables.');
         return { recibido: true, estado: 'EN_REVISION', idOrganizacion: tx.idOrganizacion };
       }
@@ -541,6 +602,105 @@ export class PagosService {
       where: { idTransaccion: tx.idTransaccion },
       data: { estado: EstadoPagoTransaccion.EN_REVISION, detalleError: motivo.slice(0, 2000) },
     });
+  }
+
+  async procesarCallbackLibelula(
+    idTransaccionExterna: string | undefined,
+    ref: string | undefined,
+    factura?: { invoiceId?: string; invoiceUrl?: string; numeroFactura?: string },
+  ): Promise<void> {
+    if (!idTransaccionExterna || !ref) return;
+    const tx = await this.prisma.transaccionPago.findFirst({
+      where: { proveedor: ProveedorPago.LIBELULA, idTransaccionExterna },
+    });
+    if (!tx || !this.tokenCallbackEsValido(ref, tx.tokenCallbackHash)) return;
+    await this.conciliarTransaccionLibelula(tx, factura);
+  }
+
+  private tokenCallbackEsValido(token: string, hashGuardado?: string | null): boolean {
+    if (!hashGuardado) return false;
+    const recibido = crypto.createHash('sha256').update(token).digest();
+    const esperado = Buffer.from(hashGuardado, 'hex');
+    return esperado.length === recibido.length && crypto.timingSafeEqual(esperado, recibido);
+  }
+
+  private async conciliarTransaccionLibelula(tx: any, factura?: { invoiceId?: string; invoiceUrl?: string; numeroFactura?: string }) {
+    try {
+      const deuda = await this.libelulaProvider.consultarDeuda(tx.identificadorLibelula || `UUB-${tx.idTransaccion}`);
+      if (process.env.LIBELULA_EMITE_FACTURA === 'true' && (factura?.invoiceUrl || factura?.invoiceId)) {
+        await this.prisma.transaccionPago.update({
+          where: { idTransaccion: tx.idTransaccion },
+          data: { invoiceId: factura.invoiceId, invoiceUrl: factura.invoiceUrl, numeroFactura: factura.numeroFactura },
+        });
+      }
+      if (!deuda.pagado) {
+        if (deuda.deuda_expirada) {
+          await this.prisma.transaccionPago.updateMany({
+            where: { idTransaccion: tx.idTransaccion, estado: EstadoPagoTransaccion.PENDIENTE },
+            data: { estado: EstadoPagoTransaccion.RECHAZADO, detalleError: 'Deuda Libélula expirada sin pago.' },
+          });
+        }
+        return;
+      }
+
+      const facturaDeConsulta = deuda.facturas?.[0];
+      if (process.env.LIBELULA_EMITE_FACTURA === 'true' && facturaDeConsulta?.url) {
+        await this.prisma.transaccionPago.update({
+          where: { idTransaccion: tx.idTransaccion },
+          data: { invoiceId: facturaDeConsulta.invoice_id, invoiceUrl: facturaDeConsulta.url, numeroFactura: facturaDeConsulta.numero_factura },
+        });
+        tx = { ...tx, invoiceId: facturaDeConsulta.invoice_id, invoiceUrl: facturaDeConsulta.url, numeroFactura: facturaDeConsulta.numero_factura };
+      }
+
+      const idEventoExterno = `${tx.idTransaccionExterna}:PAGADO`.slice(0, 150);
+      const evento = await this.registrarOReclamarEvento(
+        ProveedorPago.LIBELULA,
+        idEventoExterno,
+        'PAGADO',
+        { idTransaccionExterna: tx.idTransaccionExterna, identificador: tx.identificadorLibelula },
+      );
+      if (!evento.procesar) return;
+      const verificacion = {
+        valido: true,
+        evento: 'PAGADO',
+        idTransaccionExterna: tx.idTransaccionExterna,
+        estadoPago: 'APROBADO' as const,
+        monto: Number(deuda.valor_total),
+        moneda: String(deuda.moneda || '').toUpperCase(),
+      };
+      try {
+        await this.procesarWebhookVerificado(ProveedorPago.LIBELULA, verificacion);
+        await this.prisma.eventoWebhook.update({
+          where: { idEventoWebhook: evento.idEventoWebhook },
+          data: { estado: EstadoEventoWebhook.PROCESADO, procesadoEn: new Date(), error: null },
+        });
+      } catch (error: any) {
+        await this.prisma.eventoWebhook.update({
+          where: { idEventoWebhook: evento.idEventoWebhook },
+          data: { estado: EstadoEventoWebhook.ERROR, error: String(error?.message || 'Error al procesar pago Libélula').slice(0, 2000) },
+        });
+        throw error;
+      }
+    } catch (error) {
+      this.logger.error(`[Libélula] No se pudo conciliar la transacción ${tx.idTransaccion}.`, error);
+    }
+  }
+
+  @Cron('0 */10 * * * *', { timeZone: 'America/La_Paz' })
+  async conciliarPagosLibelulaPendientes() {
+    const dias = Number(process.env.LIBELULA_DEUDA_DIAS || 3);
+    const desde = new Date();
+    desde.setDate(desde.getDate() - ((Number.isFinite(dias) && dias > 0 ? dias : 3) + 1));
+    const pendientes = await this.prisma.transaccionPago.findMany({
+      where: {
+        proveedor: ProveedorPago.LIBELULA,
+        estado: EstadoPagoTransaccion.PENDIENTE,
+        fechaTransaccion: { gte: desde },
+      },
+    });
+    for (const tx of pendientes) {
+      await this.conciliarTransaccionLibelula(tx);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -725,6 +885,7 @@ export class PagosService {
         moneda: tx.monedaLocal ?? tx.moneda,
         periodoCubierto,
         numeroComprobante: String(tx.idTransaccion),
+        invoiceUrl: tx.invoiceUrl || undefined,
       })));
     } catch (error) {
       this.logger.error(`[Recibo] No se pudo notificar el pago ${tx.idTransaccion}.`, error);

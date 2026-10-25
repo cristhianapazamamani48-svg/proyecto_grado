@@ -11,6 +11,11 @@ export interface CheckoutParams {
   nombreUsuario: string;
   urlRetornoSuccess: string;
   urlRetornoCancel: string;
+  idTransaccion?: number;
+  identificadorDeuda?: string;
+  callbackUrl?: string;
+  emiteFactura?: boolean;
+  periodoMeses?: number;
 }
 
 export interface CheckoutResult {
@@ -18,6 +23,7 @@ export interface CheckoutResult {
   idTransaccionExterna: string;
   proveedor: ProveedorPago;
   metodoPago?: string;
+  qrSimpleUrl?: string;
 }
 
 export interface WebhookVerificationResult {

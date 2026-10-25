@@ -21,6 +21,9 @@ import * as crypto from 'crypto';
  * - LIVEES_RESOURCE_KEY: Clave de recurso o API Key de Livees.
  * - LIVEES_WEBHOOK_SECRET: Secreto para validar firma criptográfica HMAC de notificaciones entrantes.
  * - LIVEES_API_URL: (Opcional) URL base de API Livees (default: https://api.livees.net/v1).
+ *
+ * Estado: los endpoints y el contrato de Livees aún no fueron verificados con
+ * el proveedor. No usar esta integración como pasarela de producción sin esa confirmación.
  */
 @Injectable()
 export class LiveesProvider implements PaymentProvider {

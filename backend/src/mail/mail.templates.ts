@@ -20,6 +20,7 @@ export function plantillaReciboPago(datos: {
   moneda: string;
   periodoCubierto: string;
   numeroComprobante: string;
+  invoiceUrl?: string;
 }): PlantillaCorreo {
   const nombre = escaparHtml(datos.nombre);
   const plan = escaparHtml(datos.plan);
@@ -27,11 +28,12 @@ export function plantillaReciboPago(datos: {
   const moneda = escaparHtml(datos.moneda);
   const periodo = escaparHtml(datos.periodoCubierto);
   const comprobante = escaparHtml(datos.numeroComprobante);
+  const factura = datos.invoiceUrl ? escaparHtml(datos.invoiceUrl) : undefined;
 
   return {
     subject: `Recibo de pago ${comprobante}`,
-    html: `<p>Hola ${nombre},</p><p>Recibimos tu pago del plan <strong>${plan}</strong>.</p><ul><li>Monto: ${monto} ${moneda}</li><li>Periodo cubierto: ${periodo}</li><li>Comprobante: ${comprobante}</li></ul>`,
-    text: `Hola ${datos.nombre}. Recibimos tu pago del plan ${datos.plan}. Monto: ${datos.monto} ${datos.moneda}. Periodo cubierto: ${datos.periodoCubierto}. Comprobante: ${datos.numeroComprobante}.`,
+    html: `<p>Hola ${nombre},</p><p>Recibimos tu pago del plan <strong>${plan}</strong>.</p><ul><li>Monto: ${monto} ${moneda}</li><li>Periodo cubierto: ${periodo}</li><li>Comprobante: ${comprobante}</li></ul>${factura ? `<p><a href="${factura}">Ver factura</a></p>` : ''}`,
+    text: `Hola ${datos.nombre}. Recibimos tu pago del plan ${datos.plan}. Monto: ${datos.monto} ${datos.moneda}. Periodo cubierto: ${datos.periodoCubierto}. Comprobante: ${datos.numeroComprobante}.${datos.invoiceUrl ? ` Factura: ${datos.invoiceUrl}` : ''}`,
   };
 }
 

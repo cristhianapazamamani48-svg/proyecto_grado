@@ -6,6 +6,7 @@ import { MockPaymentProvider } from './providers/mock-payment.provider';
 import { MercadoPagoProvider } from './providers/mercadopago.provider';
 import { PayPalProvider } from './providers/paypal.provider';
 import { LiveesProvider } from './providers/livees.provider';
+import { LibelulaProvider } from './providers/libelula.provider';
 import { MailModule } from '../mail/mail.module';
 
 @Module({
@@ -16,8 +17,9 @@ import { MailModule } from '../mail/mail.module';
     MercadoPagoProvider,
     PayPalProvider,
     LiveesProvider,
+    LibelulaProvider,
   ],
   controllers: [PagosController],
-  exports: [PagosService, LiveesProvider],
+  exports: [PagosService, LiveesProvider, LibelulaProvider],
 })
 export class PagosModule {}

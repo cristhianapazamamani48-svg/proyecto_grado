@@ -24,6 +24,7 @@ export default function DocenteOrganizacionPage() {
   const [aprobandoPagoSandbox, setAprobandoPagoSandbox] = useState(false);
   const [pagoSandboxPendiente, setPagoSandboxPendiente] = useState<{ idTransaccion: number; montoLocal: number; monedaLocal: string } | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const [pagoLibelula, setPagoLibelula] = useState<{ qrSimpleUrl?: string; urlCheckout: string } | null>(null);
   const [tab, setTab] = useState<'resumen' | 'miembros' | 'invitaciones' | 'codigo' | 'ia' | 'suscripcion'>('suscripcion');
 
   // Formularios
@@ -83,6 +84,22 @@ export default function DocenteOrganizacionPage() {
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  useEffect(() => {
+    if (!pagoLibelula) return;
+    const id = window.setInterval(async () => {
+      const token = getToken();
+      const res = await fetch(`${API}/pagos/mi-suscripcion`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.plan !== 'GRATUITO' && data.estadoSuscripcion === 'ACTIVA') {
+        setPagoLibelula(null);
+        setSuscripcion(data);
+        mostrarMensaje('ok', 'Pago confirmado. Tu suscripción ya está activa.');
+      }
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [pagoLibelula, API]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // CAPTURA DE RETORNO DE PAYPAL
@@ -262,10 +279,11 @@ export default function DocenteOrganizacionPage() {
     }
   };
 
-  const handleCrearCheckout = async (proveedor: 'MOCK_SANDBOX' | 'MERCADOPAGO' | 'PAYPAL' | 'LIVEES') => {
+  const handleCrearCheckout = async (proveedor: 'MOCK_SANDBOX' | 'MERCADOPAGO' | 'PAYPAL' | 'LIVEES' | 'LIBELULA') => {
     const token = getToken();
     setCargandoCheckout(true);
     setCheckoutUrl(null);
+    setPagoLibelula(null);
     try {
       const res = await fetch(`${API}/pagos/checkout`, {
         method: 'POST',
@@ -276,7 +294,7 @@ export default function DocenteOrganizacionPage() {
         body: JSON.stringify({
           plan: 'MAESTRO_PRO',
           proveedor,
-          periodoMeses: proveedor === 'LIVEES' || proveedor === 'MOCK_SANDBOX' ? periodoMeses : 1,
+          periodoMeses: proveedor === 'LIBELULA' || proveedor === 'LIVEES' || proveedor === 'MOCK_SANDBOX' ? periodoMeses : 1,
         }),
       });
       const data = await res.json();
@@ -293,6 +311,11 @@ export default function DocenteOrganizacionPage() {
         }
         if (data.urlCheckout) {
           setCheckoutUrl(data.urlCheckout);
+          if (proveedor === 'LIBELULA') {
+            setPagoLibelula({ qrSimpleUrl: data.qrSimpleUrl, urlCheckout: data.urlCheckout });
+            mostrarMensaje('ok', 'Deuda registrada. Escanea el QR o usa el enlace de pago.');
+            return;
+          }
           mostrarMensaje('ok', 'Sesión de pago creada. Redirigiendo a la pasarela...');
           if (proveedor === 'LIVEES' || proveedor === 'MERCADOPAGO') {
             window.open(data.urlCheckout, '_blank');
@@ -601,6 +624,19 @@ export default function DocenteOrganizacionPage() {
                   </div>
                 )}
 
+                {pagoLibelula && (
+                  <div className="rounded-xl border border-blue-200 bg-white p-4 space-y-3">
+                    <p className="text-sm font-bold text-slate-800">Pagar en Bolivia</p>
+                    {pagoLibelula.qrSimpleUrl && (
+                      <img src={pagoLibelula.qrSimpleUrl} alt="Código QR Simple para pagar" className="h-52 w-52 rounded-lg border border-slate-200 object-contain" />
+                    )}
+                    <a href={pagoLibelula.urlCheckout} target="_blank" rel="noopener noreferrer" className="inline-block text-sm font-semibold text-blue-700 underline">
+                      Pagar con tarjeta u otros medios
+                    </a>
+                    <p className="text-xs text-slate-500">Tu pago puede tardar unas horas si usas PagosNet o BNB. Esta pantalla actualizará el estado automáticamente.</p>
+                  </div>
+                )}
+
                 <div className="rounded-xl border border-blue-200 bg-white/80 p-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -632,12 +668,12 @@ export default function DocenteOrganizacionPage() {
                   })()}
                   <div className="flex flex-wrap gap-3">
                     <button
-                      onClick={() => handleCrearCheckout('LIVEES')}
+                      onClick={() => handleCrearCheckout('LIBELULA')}
                       disabled={cargandoCheckout}
                       className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center gap-2 cursor-pointer"
                     >
                       <span>🇧🇴</span>
-                      <span>{cargandoCheckout ? 'Iniciando...' : 'Pagar en Bolivia (QR Simple / Yape / Tarjetas)'}</span>
+                      <span>{cargandoCheckout ? 'Iniciando...' : 'Pagar en Bolivia (QR Simple / Tarjetas)'}</span>
                     </button>
                     <button
                       onClick={() => handleCrearCheckout('MOCK_SANDBOX')}

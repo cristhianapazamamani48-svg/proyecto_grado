@@ -8,7 +8,9 @@ import { MockPaymentProvider } from './providers/mock-payment.provider';
 import { MercadoPagoProvider } from './providers/mercadopago.provider';
 import { PayPalProvider } from './providers/paypal.provider';
 import { LiveesProvider } from './providers/livees.provider';
+import { LibelulaProvider } from './providers/libelula.provider';
 import { MailService } from '../mail/mail.service';
+import * as crypto from 'crypto';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers compartidos
@@ -103,6 +105,15 @@ async function buildModule() {
           nombreProveedor: ProveedorPago.LIVEES,
           crearSesionCheckout: jest.fn(),
           verificarWebhooks: jest.fn(),
+          cancelarSuscripcion: jest.fn(),
+        },
+      },
+      {
+        provide: LibelulaProvider,
+        useValue: {
+          nombreProveedor: ProveedorPago.LIBELULA,
+          crearSesionCheckout: jest.fn(),
+          consultarDeuda: jest.fn(),
           cancelarSuscripcion: jest.fn(),
         },
       },
@@ -547,6 +558,45 @@ describe('PagosService — procesarWebhook', () => {
     );
     // La suscripción fue extendida
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PagosService — callback Libélula', () => {
+  let service: PagosService;
+  let prisma: any;
+  let libelula: any;
+
+  beforeEach(async () => {
+    const module = await buildModule();
+    service = module.get(PagosService);
+    prisma = module.get(PrismaService);
+    libelula = module.get(LibelulaProvider);
+  });
+
+  it('no activa cuando el callback no tiene un token válido', async () => {
+    prisma.transaccionPago.findFirst.mockResolvedValue(makeTx({ proveedor: ProveedorPago.LIBELULA, tokenCallbackHash: crypto.createHash('sha256').update('correcto').digest('hex') }));
+    await service.procesarCallbackLibelula('lib-tx', 'incorrecto');
+    expect(libelula.consultarDeuda).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('consulta Libélula y activa una vez cuando confirma el pago', async () => {
+    const tx = makeTx({ proveedor: ProveedorPago.LIBELULA, idTransaccionExterna: 'lib-tx', identificadorLibelula: 'UUB-1', tokenCallbackHash: crypto.createHash('sha256').update('correcto').digest('hex') });
+    prisma.transaccionPago.findFirst.mockResolvedValue(tx);
+    libelula.consultarDeuda.mockResolvedValue({ pagado: true, valor_total: 50, moneda: 'BOB' });
+    await service.procesarCallbackLibelula('lib-tx', 'correcto');
+    expect(libelula.consultarDeuda).toHaveBeenCalledWith('UUB-1');
+    expect(prisma.eventoWebhook.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ idEventoExterno: 'lib-tx:PAGADO' }) }));
+    expect(prisma.$transaction).toHaveBeenCalled();
+  });
+
+  it('marca EN_REVISION y no activa si monto o moneda difieren', async () => {
+    const tx = makeTx({ proveedor: ProveedorPago.LIBELULA, idTransaccionExterna: 'lib-tx', identificadorLibelula: 'UUB-1', tokenCallbackHash: crypto.createHash('sha256').update('correcto').digest('hex') });
+    prisma.transaccionPago.findFirst.mockResolvedValue(tx);
+    libelula.consultarDeuda.mockResolvedValue({ pagado: true, valor_total: 999, moneda: 'BOB' });
+    await service.procesarCallbackLibelula('lib-tx', 'correcto');
+    expect(prisma.transaccionPago.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ estado: EstadoPagoTransaccion.EN_REVISION }) }));
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
 

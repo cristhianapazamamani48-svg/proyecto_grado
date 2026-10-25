@@ -5,11 +5,13 @@ import {
   Body,
   Param,
   Headers,
+  Query,
   UseGuards,
   Request,
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '@nestjs/passport';
 import { PagosService } from './pagos.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -118,6 +120,19 @@ export class PagosController {
     else proveedor = ProveedorPago.MOCK_SANDBOX;
 
     return this.pagosService.procesarWebhook(proveedor, body, headers, req?.rawBody);
+  }
+
+  @Get('webhook/libelula')
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  async procesarCallbackLibelula(
+    @Query('transaction_id') transactionId?: string,
+    @Query('ref') ref?: string,
+    @Query('invoice_id') invoiceId?: string,
+    @Query('invoice_url') invoiceUrl?: string,
+  ) {
+    // Este callback no revela si una transacción existe o fue procesada.
+    await this.pagosService.procesarCallbackLibelula(transactionId, ref, { invoiceId, invoiceUrl });
+    return { recibido: true };
   }
 
   @Get('mi-suscripcion')

@@ -34,6 +34,7 @@ enum ProveedorPago {
   MERCADOPAGO
   PAYPAL
   LIVEES
+  LIBELULA
 }
 
 enum EstadoPagoTransaccion {
@@ -511,6 +512,12 @@ model TransaccionPago {
   periodoMeses         Int                   @default(1) @map("periodo_meses")
   proveedor            ProveedorPago         @default(MOCK_SANDBOX)
   idTransaccionExterna String?               @unique @map("id_transaccion_externa") @db.VarChar(100)
+  identificadorLibelula String?              @unique @map("identificador_libelula") @db.VarChar(100)
+  tokenCallbackHash   String?                @map("token_callback_hash") @db.VarChar(64)
+  qrSimpleUrl         String?                @map("qr_simple_url") @db.Text
+  invoiceId           String?                @map("invoice_id") @db.VarChar(100)
+  invoiceUrl          String?                @map("invoice_url") @db.Text
+  numeroFactura       String?                @map("numero_factura") @db.VarChar(100)
   metodoPago           String?               @map("metodo_pago") @db.VarChar(50)
   urlCheckout          String?               @map("url_checkout") @db.Text
   firmaWebhook         String?               @map("firma_webhook") @db.VarChar(255)
