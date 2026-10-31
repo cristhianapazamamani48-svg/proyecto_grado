@@ -2,6 +2,7 @@ import { Controller, Post, Body } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { OlvidePasswordDto, RestablecerPasswordDto } from './dto/password-recovery.dto';
+import { RegistroDocenteDto } from './dto/registro-docente.dto';
 
 // Límite estricto contra fuerza bruta y creación masiva de cuentas.
 // 20/min por IP: suficiente para un aula/logins simultáneos tras un NAT.
@@ -11,7 +12,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('docente/registro')
-  async registrarDocente(@Body() body: { nombre: string; apellido?: string; email: string; password: string }) {
+  async registrarDocente(@Body() body: RegistroDocenteDto) {
     return this.authService.registrarDocente(body.nombre, body.apellido || '', body.email, body.password);
   }
 

@@ -170,6 +170,9 @@ export class EvaluacionesService {
   }
 
   async crearEvaluacion(idUsuario: number, dto: CrearEvaluacionDto) {
+    if (!dto?.nombre?.trim()) throw new BadRequestException('El título de la evaluación es obligatorio.');
+    if (!Array.isArray(dto.preguntas)) throw new BadRequestException('La evaluación debe incluir una lista de preguntas.');
+
     const usuario = await this.prisma.usuario.findUnique({
       where: { idUsuario },
       select: { idOrganizacionActual: true },
@@ -197,6 +200,9 @@ export class EvaluacionesService {
   }
 
   async actualizarEvaluacion(idEvaluacion: number, idUsuario: number, dto: CrearEvaluacionDto) {
+    if (!dto?.nombre?.trim()) throw new BadRequestException('El título de la evaluación es obligatorio.');
+    if (!Array.isArray(dto.preguntas)) throw new BadRequestException('La evaluación debe incluir una lista de preguntas.');
+
     const evaluacion = await this.prisma.evaluacion.findUnique({
       where: { idEvaluacion },
       include: { sesiones: { include: { participantes: { select: { idParticipante: true } } } } },

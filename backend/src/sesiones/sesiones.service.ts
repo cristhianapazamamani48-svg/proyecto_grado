@@ -737,8 +737,8 @@ export class SesionesService {
       throw new BadRequestException('El intento ya no está disponible para guardar respuestas.');
     }
 
-    if (participante.sesion.estado === EstadoSesion.FINALIZADA) {
-      throw new BadRequestException('La sesión ha finalizado. No se pueden guardar más respuestas.');
+    if (participante.sesion.estado !== EstadoSesion.ACTIVA) {
+      throw new BadRequestException('La sesión aún no está activa o ya finalizó.');
     }
 
     const evaluacion = participante.sesion.evaluacion;

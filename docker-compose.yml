@@ -1,4 +1,4 @@
-﻿services:
+services:
   postgres:
     image: postgres:16-alpine
     container_name: uub_postgres
@@ -30,6 +30,8 @@
       AI_MODEL: "mock-v1"
       AI_MAX_TOKENS: "500"
       AI_TEMPERATURE: "0.3"
+      MAIL_PROVIDER: "console"
+      NODE_ENV: "development"
     depends_on:
       - postgres
 
@@ -40,6 +42,7 @@
       args:
         NEXT_PUBLIC_API_URL: "/api"
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+        BACKEND_INTERNAL_URL: "http://backend:3001"
     container_name: uub_frontend
     restart: always
     environment:
