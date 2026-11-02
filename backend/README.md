@@ -31,6 +31,18 @@
 $ npm install
 ```
 
+## Generación de evaluaciones con Claude
+
+La creación por tema y desde PDF requiere una clave de Anthropic. En `backend/.env`, configura:
+
+```env
+AI_PROVIDER=claude
+AI_API_KEY=tu_clave_de_anthropic
+AI_MODEL=claude-sonnet-4-20250514
+```
+
+Reinicia el backend después de cambiar estas variables. Los borradores generados quedan editables y no se guardan hasta que el docente los confirme. Los PDF se procesan en memoria, deben ser menores de 10 MB y contener texto seleccionable; no se conservan ni se procesan documentos escaneados con OCR. El texto del tema o PDF se envía a Anthropic para generar las preguntas.
+
 ## Compile and run the project
 
 ```bash

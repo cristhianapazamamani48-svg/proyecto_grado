@@ -25,10 +25,31 @@ interface PreguntaForm {
   espacios: EspacioForm[];
 }
 
+type ModoCreacion = 'MANUAL' | 'PDF' | 'TEMA';
+
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+const TIPOS_PREGUNTA_GENERACION: { tipo: PreguntaForm['tipo']; etiqueta: string }[] = [
+  { tipo: 'OPCION_MULTIPLE', etiqueta: 'Opción múltiple' },
+  { tipo: 'SELECCION_MULTIPLE', etiqueta: 'Selección múltiple' },
+  { tipo: 'VERDADERO_FALSO', etiqueta: 'Verdadero / falso' },
+  { tipo: 'COMPLETAR', etiqueta: 'Completar espacios' },
+  { tipo: 'ABIERTA', etiqueta: 'Respuesta abierta' },
+];
+
 export default function NuevaEvaluacionPage() {
   const router = useRouter();
   const [nombre, setNombre] = useState('Nueva Evaluación Académica');
   const [descripcion, setDescripcion] = useState('');
+  const [modoCreacion, setModoCreacion] = useState<ModoCreacion>('MANUAL');
+  const [archivoPdf, setArchivoPdf] = useState<File | null>(null);
+  const [temaGeneracion, setTemaGeneracion] = useState('');
+  const [tiposPreguntaGeneracion, setTiposPreguntaGeneracion] = useState<PreguntaForm['tipo'][]>([]);
+  const [cantidadPreguntasGeneracion, setCantidadPreguntasGeneracion] = useState(10);
+  const [estadoGeneracion, setEstadoGeneracion] = useState<{ disponible: boolean; mensaje: string } | null>(null);
+  const [generando, setGenerando] = useState(false);
+  const [idiomaPendiente, setIdiomaPendiente] = useState<string | null>(null);
+  const [idiomaConfirmado, setIdiomaConfirmado] = useState('');
   
   // Configuraciones de Evaluación
   const [tiempoTotal, setTiempoTotal] = useState<number | ''>('');
@@ -66,11 +87,43 @@ export default function NuevaEvaluacionPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('uub_docente_token');
-    if (!token) router.push('/docente/login');
+    if (!token) {
+      router.push('/docente/login');
+      return;
+    }
+
+    const controller = new AbortController();
+    const consultarDisponibilidad = async () => {
+      try {
+        const response = await fetch(`${API}/evaluaciones/generacion/estado`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'No se pudo consultar la disponibilidad de Claude.');
+        setEstadoGeneracion(data);
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setEstadoGeneracion({
+            disponible: false,
+            mensaje: err instanceof Error ? err.message : 'No se pudo consultar la disponibilidad de Claude.',
+          });
+        }
+      }
+    };
+
+    void consultarDisponibilidad();
+    return () => controller.abort();
   }, [router]);
 
   const toggleAcordeon = (key: string) => {
     setAcordeonAbierto((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleTipoPreguntaGeneracion = (tipo: PreguntaForm['tipo']) => {
+    setTiposPreguntaGeneracion((actuales) =>
+      actuales.includes(tipo) ? actuales.filter((item) => item !== tipo) : [...actuales, tipo],
+    );
   };
 
   const agregarPregunta = (tipo: PreguntaForm['tipo']) => {
@@ -187,6 +240,100 @@ export default function NuevaEvaluacionPage() {
     setPreguntas(copia);
   };
 
+  const generarEvaluacion = async (idioma?: string) => {
+    setError('');
+    if (!estadoGeneracion?.disponible) {
+      setError(estadoGeneracion?.mensaje || 'La generación con Claude no está configurada.');
+      return;
+    }
+    if (!tiposPreguntaGeneracion.length) {
+      setError('Selecciona al menos un tipo de pregunta.');
+      return;
+    }
+    if (!Number.isInteger(cantidadPreguntasGeneracion) || cantidadPreguntasGeneracion < 1 || cantidadPreguntasGeneracion > 30) {
+      setError('La cantidad debe estar entre 1 y 30 preguntas.');
+      return;
+    }
+    if (modoCreacion === 'PDF' && !archivoPdf) {
+      setError('Selecciona un archivo PDF antes de generar la evaluación.');
+      return;
+    }
+    if (idiomaPendiente && !idioma?.trim()) {
+      setError('Confirma el idioma detectado o indica el idioma correcto.');
+      return;
+    }
+
+    const token = localStorage.getItem('uub_docente_token');
+    if (!token) {
+      router.push('/docente/login');
+      return;
+    }
+
+    setGenerando(true);
+    try {
+      const esPdf = modoCreacion === 'PDF';
+      const endpoint = esPdf ? 'pdf' : 'tema';
+      let body: BodyInit;
+      const encabezados: HeadersInit = { Authorization: `Bearer ${token}` };
+      const datosGeneracion = {
+        tiposPregunta: tiposPreguntaGeneracion,
+        cantidadPreguntas: cantidadPreguntasGeneracion,
+        idiomaConfirmado: idioma?.trim() || undefined,
+      };
+
+      if (esPdf) {
+        const formData = new FormData();
+        formData.append('archivo', archivoPdf!);
+        formData.append('tiposPregunta', JSON.stringify(datosGeneracion.tiposPregunta));
+        formData.append('cantidadPreguntas', String(datosGeneracion.cantidadPreguntas));
+        if (datosGeneracion.idiomaConfirmado) formData.append('idiomaConfirmado', datosGeneracion.idiomaConfirmado);
+        body = formData;
+      } else {
+        if (temaGeneracion.trim().length < 3) {
+          setError('Escribe un tema de al menos 3 caracteres.');
+          return;
+        }
+        encabezados['Content-Type'] = 'application/json';
+        body = JSON.stringify({ ...datosGeneracion, tema: temaGeneracion.trim() });
+      }
+
+      const response = await fetch(`${API}/evaluaciones/generacion/${endpoint}`, {
+        method: 'POST',
+        headers: encabezados,
+        body,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const message = Array.isArray(data.message) ? data.message.join(' ') : data.message;
+        throw new Error(message || 'No se pudo generar la evaluación.');
+      }
+
+      if (data.requiereConfirmacionIdioma && !idioma) {
+        setIdiomaPendiente(data.idioma || 'el idioma detectado');
+        setIdiomaConfirmado(data.idioma || '');
+        return;
+      }
+
+      setNombre(data.nombre);
+      setDescripcion(data.descripcion || '');
+      setPreguntas(
+        data.preguntas.map((pregunta: PreguntaForm) => ({
+          tipo: pregunta.tipo,
+          enunciado: pregunta.enunciado,
+          puntaje: pregunta.puntaje,
+          opciones: pregunta.opciones || [],
+          espacios: pregunta.espacios || [],
+        })),
+      );
+      setIdiomaPendiente(null);
+      setModoCreacion('MANUAL');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo generar la evaluación.');
+    } finally {
+      setGenerando(false);
+    }
+  };
+
   const guardarEvaluacion = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -230,7 +377,7 @@ export default function NuevaEvaluacionPage() {
         })),
       };
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/evaluaciones`, {
+      const res = await fetch(`${API}/evaluaciones`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -270,6 +417,167 @@ export default function NuevaEvaluacionPage() {
           {cargando ? 'Guardando...' : 'Guardar Evaluación'}
         </button>
       </header>
+
+      <section className="max-w-7xl w-full mx-auto px-8 pt-6" aria-labelledby="modo-creacion-heading">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 id="modo-creacion-heading" className="text-base font-bold text-slate-900">
+              ¿Cómo quieres crear tu evaluación?
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Puedes diseñarla manualmente o preparar una evaluación desde un documento o un tema.
+            </p>
+          </div>
+          <span
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+              estadoGeneracion?.disponible
+                ? 'bg-emerald-50 text-emerald-800'
+                : 'bg-amber-50 text-amber-800'
+            }`}
+          >
+            {estadoGeneracion === null
+              ? 'Comprobando Claude...'
+              : estadoGeneracion.disponible
+                ? 'Claude listo'
+                : 'Claude pendiente de configuración'}
+          </span>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3" role="group" aria-label="Modo de creación">
+          {([
+            ['MANUAL', '✍️', 'Crear manualmente'],
+            ['PDF', '📄', 'Usar un PDF'],
+            ['TEMA', '💡', 'Generar por tema'],
+          ] as const).map(([modo, icono, etiqueta]) => (
+            <button
+              key={modo}
+              type="button"
+              aria-pressed={modoCreacion === modo}
+              onClick={() => setModoCreacion(modo)}
+              className={`rounded-2xl border p-4 text-left transition-colors ${
+                modoCreacion === modo
+                  ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100'
+                  : 'border-slate-200 bg-white hover:border-blue-300'
+              }`}
+            >
+              <span className="text-lg" aria-hidden="true">{icono}</span>
+              <span className="ml-2 text-sm font-bold text-slate-800">{etiqueta}</span>
+            </button>
+          ))}
+        </div>
+
+        {modoCreacion === 'PDF' && (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+            <h3 className="text-sm font-bold text-slate-900">Preparar evaluación desde PDF</h3>
+            <p className="mt-1 text-xs text-slate-600">
+              Se extraerá el texto del PDF y se enviará a Claude para proponer preguntas. El archivo no se conserva
+              en el servidor; revisa el borrador antes de guardar.
+            </p>
+            <label className="mt-4 block text-xs font-semibold text-slate-700" htmlFor="archivo-evaluacion-pdf">
+              Seleccionar documento PDF
+            </label>
+            <input
+              id="archivo-evaluacion-pdf"
+              type="file"
+              accept=".pdf,application/pdf"
+              disabled={generando}
+              onChange={(event) => setArchivoPdf(event.target.files?.[0] ?? null)}
+              className="mt-2 block w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-xs file:font-semibold"
+            />
+            {archivoPdf && <p className="mt-2 text-xs text-slate-600">Documento seleccionado: {archivoPdf.name}</p>}
+            <p className="mt-2 text-xs text-slate-500">Límite: 10 MB. Los PDF escaneados sin texto seleccionable no son compatibles.</p>
+          </div>
+        )}
+
+        {modoCreacion === 'TEMA' && (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+            <h3 className="text-sm font-bold text-slate-900">Preparar evaluación por tema</h3>
+            <p className="mt-1 text-xs text-slate-600">
+              Indica un tema. Claude preparará un borrador editable que podrás revisar antes de guardarlo.
+            </p>
+            <label className="mt-4 block text-xs font-semibold text-slate-700" htmlFor="tema-evaluacion">
+              Tema de la evaluación
+            </label>
+            <textarea
+              id="tema-evaluacion"
+              value={temaGeneracion}
+              onChange={(event) => setTemaGeneracion(event.target.value)}
+              rows={2}
+              placeholder="Ej.: La fotosíntesis y sus etapas"
+              className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+        )}
+
+        {modoCreacion !== 'MANUAL' && (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+            <p className="text-xs font-semibold text-slate-700">Tipos de pregunta</p>
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">
+              {TIPOS_PREGUNTA_GENERACION.map(({ tipo, etiqueta }) => (
+                <label key={tipo} className="flex items-center gap-2 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={tiposPreguntaGeneracion.includes(tipo)}
+                    disabled={generando}
+                    onChange={() => toggleTipoPreguntaGeneracion(tipo)}
+                    className="accent-blue-600"
+                  />
+                  {etiqueta}
+                </label>
+              ))}
+            </div>
+            <label className="mt-4 block text-xs font-semibold text-slate-700" htmlFor="cantidad-preguntas-generacion">
+              Cantidad de preguntas
+            </label>
+            <input
+              id="cantidad-preguntas-generacion"
+              type="number"
+              min={1}
+              max={30}
+              value={cantidadPreguntasGeneracion}
+              disabled={generando}
+              onChange={(event) => setCantidadPreguntasGeneracion(Number(event.target.value))}
+              className="mt-2 w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none"
+            />
+            <p className="mt-3 text-xs text-slate-500">
+              Se conservará el idioma del material. El tema o texto extraído del PDF se enviará a Claude para generar las preguntas.
+            </p>
+            {idiomaPendiente !== null && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <label htmlFor="idioma-confirmado" className="block text-xs font-semibold text-amber-900">
+                  Claude no identificó con seguridad el idioma ({idiomaPendiente}). Confirma o indica el idioma correcto:
+                </label>
+                <input
+                  id="idioma-confirmado"
+                  value={idiomaConfirmado}
+                  onChange={(event) => setIdiomaConfirmado(event.target.value)}
+                  disabled={generando}
+                  maxLength={80}
+                  placeholder="Ej.: español"
+                  className="mt-2 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </div>
+            )}
+            <p className="mt-3 text-xs text-slate-500">
+              {estadoGeneracion?.mensaje || 'Consultando la configuración del proveedor de IA...'}
+            </p>
+            <button
+              type="button"
+              disabled={!estadoGeneracion?.disponible || generando}
+              onClick={() => void generarEvaluacion(idiomaPendiente !== null ? idiomaConfirmado : undefined)}
+              className="mt-4 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+            >
+              {generando
+                ? 'Generando...'
+                : idiomaPendiente !== null
+                  ? 'Confirmar idioma y generar'
+                  : modoCreacion === 'PDF'
+                    ? 'Generar preguntas desde el PDF'
+                    : 'Generar evaluación por tema'}
+            </button>
+          </div>
+        )}
+      </section>
 
       {/* Main 2-Column Layout */}
       <div className="flex-1 max-w-7xl w-full mx-auto p-8 grid grid-cols-1 lg:grid-cols-12 gap-8">

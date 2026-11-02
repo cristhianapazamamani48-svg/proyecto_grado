@@ -1,7 +1,19 @@
-import { Injectable, Logger, ForbiddenException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Inject,
+  forwardRef,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PagosService } from '../pagos/pagos.service';
-import { AiProvider, AiAnalysisResult } from './interfaces/ai-provider.interface';
+import {
+  AiProvider,
+  AiAnalysisResult,
+  GeneratedEvaluation,
+  GenerateEvaluationParams,
+} from './interfaces/ai-provider.interface';
 import { MockAIProvider } from './providers/mock-ai.provider';
 import { OpenAIProvider } from './providers/openai.provider';
 import { GeminiProvider } from './providers/gemini.provider';
@@ -42,10 +54,75 @@ export class AiService {
         this.provider = this.mockProvider;
         break;
     }
-    this.logger.log(`Proveedor de IA inicializado: ${this.provider.nombreProveedor}`);
+    this.logger.log(
+      `Proveedor de IA inicializado: ${this.provider.nombreProveedor}`,
+    );
   }
 
-  async analizarRespuestaAbierta(idRespuesta: number, idUsuario: number): Promise<AiAnalysisResult> {
+  getEvaluationGenerationStatus() {
+    const available =
+      this.provider.nombreProveedor === 'claude' &&
+      typeof this.provider.generateEvaluation === 'function' &&
+      this.claudeProvider.isConfigured();
+
+    return {
+      disponible: available,
+      mensaje: available
+        ? 'Generación con Claude disponible.'
+        : 'Configura AI_PROVIDER=claude y AI_API_KEY en backend/.env y reinicia el backend.',
+    };
+  }
+
+  async generarEvaluacion(
+    idUsuario: number,
+    params: GenerateEvaluationParams,
+  ): Promise<GeneratedEvaluation> {
+    if (
+      !this.getEvaluationGenerationStatus().disponible ||
+      !this.provider.generateEvaluation
+    ) {
+      throw new ServiceUnavailableException(
+        'La generación requiere Claude configurado. Define AI_PROVIDER=claude y AI_API_KEY en backend/.env.',
+      );
+    }
+
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { idUsuario },
+      select: { idOrganizacionActual: true },
+    });
+    if (!usuario)
+      throw new NotFoundException('No se encontró la cuenta docente.');
+
+    const idOrganizacion = usuario.idOrganizacionActual;
+    if (idOrganizacion) {
+      await this.pagosService.verificarPermisosYCuotas(
+        idOrganizacion,
+        'SOLICITAR_IA',
+      );
+    }
+
+    const resultado = await this.provider.generateEvaluation(params);
+
+    if (idOrganizacion) {
+      await this.prisma.usoIaLog.create({
+        data: {
+          idOrganizacion,
+          idUsuario,
+          proveedor: this.provider.nombreProveedor,
+          tokensUtilizados: Math.ceil(
+            (params.contenido.length + JSON.stringify(resultado).length) / 4,
+          ),
+        },
+      });
+    }
+
+    return resultado;
+  }
+
+  async analizarRespuestaAbierta(
+    idRespuesta: number,
+    idUsuario: number,
+  ): Promise<AiAnalysisResult> {
     const respuesta = await this.prisma.respuesta.findUnique({
       where: { idRespuesta },
       include: {
@@ -63,12 +140,17 @@ export class AiService {
     });
 
     if (!respuesta) {
-      throw new NotFoundException(`La respuesta ${idRespuesta} no fue encontrada.`);
+      throw new NotFoundException(
+        `La respuesta ${idRespuesta} no fue encontrada.`,
+      );
     }
 
     const idOrganizacion = respuesta.pregunta.evaluacion.idOrganizacion;
     if (idOrganizacion) {
-      await this.pagosService.verificarPermisosYCuotas(idOrganizacion, 'SOLICITAR_IA');
+      await this.pagosService.verificarPermisosYCuotas(
+        idOrganizacion,
+        'SOLICITAR_IA',
+      );
     }
 
     // La verificación de cuotas ya la realizó pagosService.verificarPermisosYCuotas arriba.
@@ -109,7 +191,8 @@ export class AiService {
           idOrganizacion,
           idUsuario,
           proveedor: this.provider.nombreProveedor,
-          tokensUtilizados: Math.ceil((enunciado.length + respEstudiante.length) / 4) + 150,
+          tokensUtilizados:
+            Math.ceil((enunciado.length + respEstudiante.length) / 4) + 150,
         },
       });
     }
