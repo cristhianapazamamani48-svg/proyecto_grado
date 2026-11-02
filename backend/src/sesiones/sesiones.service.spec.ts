@@ -21,6 +21,7 @@ describe('SesionesService', () => {
       },
       sesion: {
         findUnique: jest.fn(),
+        findMany: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
       },
@@ -100,6 +101,38 @@ describe('SesionesService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('listarPorDocente', () => {
+    it('returns sessions belonging to the teacher with evaluation and participant summary', async () => {
+      const sesiones = [
+        {
+          idSesion: 12,
+          codigo: 'ABC234',
+          estado: EstadoSesion.ACTIVA,
+          fechaInicio: new Date(),
+          fechaFin: null,
+          evaluacion: { idEvaluacion: 7, nombre: 'Evaluación de prueba' },
+          _count: { participantes: 3 },
+        },
+      ];
+      prisma.sesion.findMany.mockResolvedValue(sesiones);
+
+      await expect(service.listarPorDocente(42)).resolves.toEqual(sesiones);
+      expect(prisma.sesion.findMany).toHaveBeenCalledWith({
+        where: { evaluacion: { idUsuario: 42 } },
+        select: {
+          idSesion: true,
+          codigo: true,
+          estado: true,
+          fechaInicio: true,
+          fechaFin: true,
+          evaluacion: { select: { idEvaluacion: true, nombre: true } },
+          _count: { select: { participantes: true } },
+        },
+        orderBy: { idSesion: 'desc' },
+      });
+    });
   });
 
   describe('Anti-Tampering y Validación de Tiempo', () => {

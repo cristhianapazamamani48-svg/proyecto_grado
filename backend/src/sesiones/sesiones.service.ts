@@ -108,6 +108,24 @@ export class SesionesService {
     });
   }
 
+  async listarPorDocente(idUsuario: number) {
+    return this.prisma.sesion.findMany({
+      where: { evaluacion: { idUsuario } },
+      select: {
+        idSesion: true,
+        codigo: true,
+        estado: true,
+        fechaInicio: true,
+        fechaFin: true,
+        evaluacion: {
+          select: { idEvaluacion: true, nombre: true },
+        },
+        _count: { select: { participantes: true } },
+      },
+      orderBy: { idSesion: 'desc' },
+    });
+  }
+
   async unirseASesion(codigo: string, nombreCompleto: string) {
     if (!nombreCompleto || !nombreCompleto.trim()) {
       throw new BadRequestException('El nombre completo es obligatorio para ingresar.');

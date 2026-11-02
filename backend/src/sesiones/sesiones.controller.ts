@@ -15,6 +15,13 @@ export class SesionesController {
     return this.sesionesService.crearSesion(req.user.sub, body.idEvaluacion);
   }
 
+  @UseGuards(AuthGuard('jwt'))
+  @Get()
+  async listarSesiones(@Request() req: any) {
+    this.requiereDocente(req.user);
+    return this.sesionesService.listarPorDocente(Number(req.user.sub));
+  }
+
   // Público: límite holgado para que un aula completa (misma IP tras NAT)
   // pueda ingresar, pero suficiente para frenar la enumeración de códigos.
   @Throttle({ default: { limit: 60, ttl: 60000 } })

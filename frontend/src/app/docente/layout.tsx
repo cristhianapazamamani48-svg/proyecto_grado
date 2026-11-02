@@ -31,6 +31,7 @@ export default function DocenteLayout({ children }: { children: React.ReactNode 
   const navItems = [
     { label: 'Panel principal', href: '/docente/dashboard', icon: '📊' },
     { label: 'Mi biblioteca', href: '/docente/biblioteca', icon: '📚' },
+    { label: 'Sesiones', href: '/docente/sesiones', icon: '🧑‍🎓' },
     { label: 'Reportes e informes', href: '/docente/reportes', icon: '📈' },
     { label: 'Mi Plan y Suscripción', href: '/docente/organizacion', icon: '💎' },
     { label: 'Nueva evaluación', href: '/docente/evaluacion/nueva', icon: '➕' },
