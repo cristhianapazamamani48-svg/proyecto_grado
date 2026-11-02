@@ -3,6 +3,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import ConfiguracionEvaluacionModal, {
+  obtenerConfiguracionEvaluacion,
+  type ConfiguracionEvaluacion,
+  type EvaluacionConConfiguracion,
+} from '@/components/ConfiguracionEvaluacionModal';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -26,6 +31,12 @@ export default function MiBibliotecaPage() {
   const [menuAbierto, setMenuAbierto] = useState<number | null>(null);
   const [confirmEliminar, setConfirmEliminar] = useState<number | null>(null);
   const [mensaje, setMensaje] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
+  const [configuracionPendiente, setConfiguracionPendiente] = useState<{
+    evaluacion: EvaluacionConConfiguracion;
+    accion: 'publicar' | 'lanzar';
+  } | null>(null);
+  const [guardandoConfiguracion, setGuardandoConfiguracion] = useState(false);
+  const [errorConfiguracion, setErrorConfiguracion] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -82,17 +93,43 @@ export default function MiBibliotecaPage() {
     return data;
   };
 
-  const handleLanzarSesion = async (idEvaluacion: number) => {
+  const prepararConfiguracion = (evaluacion: EvaluacionConConfiguracion, tipoAccion: 'publicar' | 'lanzar') => {
+    setMenuAbierto(null);
+    setErrorConfiguracion('');
+    setConfiguracionPendiente({ evaluacion, accion: tipoAccion });
+  };
+
+  const confirmarConfiguracion = async (configuracion: ConfiguracionEvaluacion) => {
+    if (!configuracionPendiente) return;
+    const { evaluacion, accion: tipoAccion } = configuracionPendiente;
+    setGuardandoConfiguracion(true);
+    setErrorConfiguracion('');
     try {
-      const data = await accion('/sesiones', 'POST', { idEvaluacion });
-      router.push(`/docente/sesion/${data.idSesion}`);
-    } catch (e: any) {
-      mostrarMensaje('error', e.message);
+      await accion(`/evaluaciones/${evaluacion.idEvaluacion}/configuracion`, 'PATCH', configuracion);
+      if (tipoAccion === 'publicar') {
+        await accion(`/evaluaciones/${evaluacion.idEvaluacion}/estado`, 'PATCH', { estado: 'PUBLICADA' });
+        setConfiguracionPendiente(null);
+        mostrarMensaje('ok', 'Evaluación publicada correctamente');
+        cargarEvaluaciones();
+      } else {
+        const data = await accion('/sesiones', 'POST', { idEvaluacion: evaluacion.idEvaluacion });
+        setConfiguracionPendiente(null);
+        router.push(`/docente/sesion/${data.idSesion}`);
+      }
+    } catch (error) {
+      setErrorConfiguracion(error instanceof Error ? error.message : 'No se pudo guardar la configuración.');
+    } finally {
+      setGuardandoConfiguracion(false);
     }
   };
 
   const handleCambiarEstado = async (idEvaluacion: number, estado: string) => {
     setMenuAbierto(null);
+    if (estado === 'PUBLICADA') {
+      const evaluacion = evaluaciones.find((item) => item.idEvaluacion === idEvaluacion);
+      if (evaluacion) prepararConfiguracion(evaluacion, 'publicar');
+      return;
+    }
     try {
       await accion(`/evaluaciones/${idEvaluacion}/estado`, 'PATCH', { estado });
       mostrarMensaje('ok', `Estado cambiado a: ${estado}`);
@@ -334,7 +371,7 @@ export default function MiBibliotecaPage() {
                 {e.estado === 'PUBLICADA' ? (
                   <button
                     type="button"
-                    onClick={() => handleLanzarSesion(e.idEvaluacion)}
+                    onClick={() => prepararConfiguracion(e, 'lanzar')}
                     className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-full shadow-md shadow-blue-500/20 transition-colors text-xs text-center"
                   >
                     ▶ Lanzar Nueva Sesión
@@ -348,6 +385,17 @@ export default function MiBibliotecaPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {configuracionPendiente && (
+        <ConfiguracionEvaluacionModal
+          accion={configuracionPendiente.accion}
+          configuracionInicial={obtenerConfiguracionEvaluacion(configuracionPendiente.evaluacion)}
+          guardando={guardandoConfiguracion}
+          error={errorConfiguracion}
+          onCancelar={() => setConfiguracionPendiente(null)}
+          onConfirmar={confirmarConfiguracion}
+        />
       )}
 
       {/* Modal Confirmar Eliminar */}

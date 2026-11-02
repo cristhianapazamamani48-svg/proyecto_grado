@@ -27,6 +27,7 @@ import {
   GenerarEvaluacionDto,
   GenerarEvaluacionPorTemaDto,
 } from './dto/generar-evaluacion.dto';
+import { ConfiguracionEvaluacionDto } from './dto/configuracion-evaluacion.dto';
 
 type AuthenticatedRequest = ExpressRequest & {
   user: { sub: string | number; tipo?: string };
@@ -198,6 +199,20 @@ export class EvaluacionesController {
       Number(id),
       Number(req.user.sub),
       estado,
+    );
+  }
+
+  @Patch(':id/configuracion')
+  async actualizarConfiguracion(
+    @Param('id') id: string,
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: ConfiguracionEvaluacionDto,
+  ) {
+    this.requiereDocente(req.user);
+    return this.evaluacionesService.actualizarConfiguracion(
+      Number(id),
+      Number(req.user.sub),
+      dto,
     );
   }
 

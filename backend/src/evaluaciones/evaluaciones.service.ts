@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { PagosService } from '../pagos/pagos.service';
 import { EstadoEvaluacion, TipoPregunta, ModoCalificacionEspacio, ModoInicioSesion, EstadoParticipante } from '@prisma/client';
+import { ConfiguracionEvaluacionDto } from './dto/configuracion-evaluacion.dto';
 
 export interface CrearPreguntaDto {
   tipo: TipoPregunta;
@@ -286,6 +287,32 @@ export class EvaluacionesService {
     return this.prisma.evaluacion.update({
       where: { idEvaluacion },
       data: { estado: nuevoEstado },
+    });
+  }
+
+  async actualizarConfiguracion(
+    idEvaluacion: number,
+    idUsuario: number,
+    dto: ConfiguracionEvaluacionDto,
+  ) {
+    const evaluacion = await this.prisma.evaluacion.findUnique({
+      where: { idEvaluacion },
+      select: { idUsuario: true },
+    });
+
+    if (!evaluacion || evaluacion.idUsuario !== idUsuario) {
+      throw new NotFoundException('Evaluación no encontrada.');
+    }
+
+    if (dto.tiempoTotal != null && dto.tiempoPorPregunta != null) {
+      throw new BadRequestException(
+        'No se puede configurar tiempo total y tiempo por pregunta simultáneamente.',
+      );
+    }
+
+    return this.prisma.evaluacion.update({
+      where: { idEvaluacion },
+      data: { ...dto },
     });
   }
 

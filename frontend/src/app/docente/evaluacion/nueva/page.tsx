@@ -41,7 +41,7 @@ export default function NuevaEvaluacionPage() {
   const router = useRouter();
   const [nombre, setNombre] = useState('Nueva Evaluación Académica');
   const [descripcion, setDescripcion] = useState('');
-  const [modoCreacion, setModoCreacion] = useState<ModoCreacion>('MANUAL');
+  const [modoCreacion, setModoCreacion] = useState<ModoCreacion | null>(null);
   const [archivoPdf, setArchivoPdf] = useState<File | null>(null);
   const [temaGeneracion, setTemaGeneracion] = useState('');
   const [tiposPreguntaGeneracion, setTiposPreguntaGeneracion] = useState<PreguntaForm['tipo'][]>([]);
@@ -51,39 +51,17 @@ export default function NuevaEvaluacionPage() {
   const [idiomaPendiente, setIdiomaPendiente] = useState<string | null>(null);
   const [idiomaConfirmado, setIdiomaConfirmado] = useState('');
   
-  // Configuraciones de Evaluación
-  const [tiempoTotal, setTiempoTotal] = useState<number | ''>('');
-  const [tiempoPorPregunta, setTiempoPorPregunta] = useState<number | ''>('');
-  const [permitirRetroceder, setPermitirRetroceder] = useState(true);
-  const [permitirModificar, setPermitirModificar] = useState(true);
-  const [permitirDejarEnBlanco, setPermitirDejarEnBlanco] = useState(true);
-  
   const [mostrarResultados, setMostrarResultados] = useState(true);
   const [mostrarRespuestas, setMostrarRespuestas] = useState(false);
   const [permitirRevision, setPermitirRevision] = useState(false);
-
-  const [aleatorizarPreguntas, setAleatorizarPreguntas] = useState(false);
-  const [aleatorizarOpciones, setAleatorizarOpciones] = useState(false);
-
-  // Monitoreo
-  const [detectarCambioPestana, setDetectarCambioPestana] = useState(false);
-  const [detectarClickDerecho, setDetectarClickDerecho] = useState(false);
-  const [detectarCopiar, setDetectarCopiar] = useState(false);
-  const [detectarPegar, setDetectarPegar] = useState(false);
-  const [detectarRedimensionar, setDetectarRedimensionar] = useState(false);
-
-  // Acordeones abiertos/cerrados en la columna izquierda
-  const [acordeonAbierto, setAcordeonAbierto] = useState<Record<string, boolean>>({
-    elementos: true,
-    tiempo: false,
-    navegacion: false,
-    monitoreo: false,
-  });
 
   const [preguntas, setPreguntas] = useState<PreguntaForm[]>([]);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState('');
   const textareaRefs = useRef<Record<number, HTMLTextAreaElement | null>>({});
+  const [acordeonAbierto, setAcordeonAbierto] = useState<Record<string, boolean>>({
+    elementos: true,
+  });
 
   useEffect(() => {
     const token = localStorage.getItem('uub_docente_token');
@@ -116,14 +94,14 @@ export default function NuevaEvaluacionPage() {
     return () => controller.abort();
   }, [router]);
 
-  const toggleAcordeon = (key: string) => {
-    setAcordeonAbierto((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const toggleTipoPreguntaGeneracion = (tipo: PreguntaForm['tipo']) => {
     setTiposPreguntaGeneracion((actuales) =>
       actuales.includes(tipo) ? actuales.filter((item) => item !== tipo) : [...actuales, tipo],
     );
+  };
+
+  const toggleAcordeon = (key: string) => {
+    setAcordeonAbierto((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const agregarPregunta = (tipo: PreguntaForm['tipo']) => {
@@ -338,6 +316,11 @@ export default function NuevaEvaluacionPage() {
     e.preventDefault();
     setError('');
 
+    if (modoCreacion !== 'MANUAL') {
+      setError('Selecciona "Crear manualmente" o genera primero una evaluación.');
+      return;
+    }
+
     if (!nombre.trim()) {
       setError('El nombre de la evaluación es requerido.');
       return;
@@ -351,21 +334,9 @@ export default function NuevaEvaluacionPage() {
       const dto = {
         nombre,
         descripcion,
-        tiempoTotal: tiempoTotal !== '' ? Number(tiempoTotal) : undefined,
-        tiempoPorPregunta: tiempoPorPregunta !== '' ? Number(tiempoPorPregunta) : undefined,
-        permitirRetroceder,
-        permitirModificar,
-        permitirDejarEnBlanco,
         mostrarResultados,
         mostrarRespuestas,
         permitirRevision,
-        aleatorizarPreguntas,
-        aleatorizarOpciones,
-        detectarCambioPestana,
-        detectarClickDerecho,
-        detectarCopiar,
-        detectarPegar,
-        detectarRedimensionar,
         preguntas: preguntas.map((p, idx) => ({
           tipo: p.tipo,
           enunciado: p.enunciado,
@@ -409,13 +380,15 @@ export default function NuevaEvaluacionPage() {
           <h1 className="text-lg font-bold text-slate-900">Diseñador de Evaluaciones</h1>
         </div>
 
-        <button
-          onClick={guardarEvaluacion}
-          disabled={cargando}
-          className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-full shadow-lg shadow-blue-500/25 transition-colors disabled:opacity-50"
-        >
-          {cargando ? 'Guardando...' : 'Guardar Evaluación'}
-        </button>
+        {modoCreacion === 'MANUAL' && (
+          <button
+            onClick={guardarEvaluacion}
+            disabled={cargando}
+            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-full shadow-lg shadow-blue-500/25 transition-colors disabled:opacity-50"
+          >
+            {cargando ? 'Guardando...' : 'Guardar Evaluación'}
+          </button>
+        )}
       </header>
 
       <section className="max-w-7xl w-full mx-auto px-8 pt-6" aria-labelledby="modo-creacion-heading">
@@ -579,6 +552,8 @@ export default function NuevaEvaluacionPage() {
         )}
       </section>
 
+      {modoCreacion === 'MANUAL' && (
+      <>
       {/* Main 2-Column Layout */}
       <div className="flex-1 max-w-7xl w-full mx-auto p-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         
@@ -645,114 +620,6 @@ export default function NuevaEvaluacionPage() {
             )}
           </div>
 
-          {/* Acordeón 2: Configuración de Tiempo */}
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-            <button
-              type="button"
-              onClick={() => toggleAcordeon('tiempo')}
-              className="w-full px-5 py-3.5 bg-slate-50 hover:bg-slate-100 font-bold text-slate-800 text-left flex items-center justify-between text-sm border-b border-slate-200 transition-colors"
-            >
-              <span>⏱️ Control de Tiempo</span>
-              <span className="text-xs text-slate-400">{acordeonAbierto.tiempo ? '▲' : '▼'}</span>
-            </button>
-            {acordeonAbierto.tiempo && (
-              <div className="p-4 space-y-4 text-xs bg-white">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Tiempo Total (Minutos)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={tiempoTotal}
-                    disabled={tiempoPorPregunta !== ''}
-                    onChange={(e) => setTiempoTotal(e.target.value !== '' ? Number(e.target.value) : '')}
-                    placeholder="Ej: 60 (Excluyente)"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Tiempo por Pregunta (Segundos)</label>
-                  <input
-                    type="number"
-                    min="5"
-                    value={tiempoPorPregunta}
-                    disabled={tiempoTotal !== ''}
-                    onChange={(e) => setTiempoPorPregunta(e.target.value !== '' ? Number(e.target.value) : '')}
-                    placeholder="Ej: 90 (Excluyente)"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Acordeón 3: Reglas de Navegación y Aleatorización */}
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-            <button
-              type="button"
-              onClick={() => toggleAcordeon('navegacion')}
-              className="w-full px-5 py-3.5 bg-slate-50 hover:bg-slate-100 font-bold text-slate-800 text-left flex items-center justify-between text-sm border-b border-slate-200 transition-colors"
-            >
-              <span>🧭 Reglas de Navegación</span>
-              <span className="text-xs text-slate-400">{acordeonAbierto.navegacion ? '▲' : '▼'}</span>
-            </button>
-            {acordeonAbierto.navegacion && (
-              <div className="p-4 space-y-3 text-xs bg-white text-slate-700">
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" checked={permitirRetroceder} onChange={(e) => setPermitirRetroceder(e.target.checked)} className="rounded text-blue-600" />
-                  <span>Permitir retroceder preguntas</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" checked={permitirModificar} onChange={(e) => setPermitirModificar(e.target.checked)} className="rounded text-blue-600" />
-                  <span>Permitir modificar respuestas</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" checked={permitirDejarEnBlanco} onChange={(e) => setPermitirDejarEnBlanco(e.target.checked)} className="rounded text-blue-600" />
-                  <span>Permitir dejar en blanco</span>
-                </label>
-                <hr className="border-slate-100 my-2" />
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" checked={aleatorizarPreguntas} onChange={(e) => setAleatorizarPreguntas(e.target.checked)} className="rounded text-blue-600" />
-                  <span>Aleatorizar preguntas</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" checked={aleatorizarOpciones} onChange={(e) => setAleatorizarOpciones(e.target.checked)} className="rounded text-blue-600" />
-                  <span>Aleatorizar opciones</span>
-                </label>
-              </div>
-            )}
-          </div>
-
-          {/* Acordeón 4: Monitoreo */}
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-            <button
-              type="button"
-              onClick={() => toggleAcordeon('monitoreo')}
-              className="w-full px-5 py-3.5 bg-slate-50 hover:bg-slate-100 font-bold text-slate-800 text-left flex items-center justify-between text-sm border-b border-slate-200 transition-colors"
-            >
-              <span>🛡️ Monitoreo e Integridad</span>
-              <span className="text-xs text-slate-400">{acordeonAbierto.monitoreo ? '▲' : '▼'}</span>
-            </button>
-            {acordeonAbierto.monitoreo && (
-              <div className="p-4 space-y-3 text-xs bg-white text-slate-700">
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" checked={detectarCambioPestana} onChange={(e) => setDetectarCambioPestana(e.target.checked)} className="rounded text-blue-600" />
-                  <span>Detectar cambio de pestaña / foco</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" checked={detectarClickDerecho} onChange={(e) => setDetectarClickDerecho(e.target.checked)} className="rounded text-blue-600" />
-                  <span>Detectar clic derecho</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" checked={detectarCopiar} onChange={(e) => setDetectarCopiar(e.target.checked)} className="rounded text-blue-600" />
-                  <span>Detectar copia de texto</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" checked={detectarPegar} onChange={(e) => setDetectarPegar(e.target.checked)} className="rounded text-blue-600" />
-                  <span>Detectar pegado de texto</span>
-                </label>
-              </div>
-            )}
-          </div>
         </aside>
 
         {/* COLUMNA DERECHA: Estructura de la Evaluación */}
@@ -1015,6 +882,8 @@ export default function NuevaEvaluacionPage() {
           </div>
         </section>
       </div>
+      </>
+      )}
     </main>
   );
 }
