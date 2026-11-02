@@ -9,6 +9,40 @@ function getToken() {
   return typeof window !== 'undefined' ? localStorage.getItem('uub_docente_token') : null;
 }
 
+type PlanDisponible = 'GRATUITO' | 'MAESTRO_PRO' | 'BASICO' | 'INSTITUCIONAL';
+
+const PLANES_DISPONIBLES: {
+  plan: PlanDisponible;
+  nombre: string;
+  descripcion: string;
+  estilo: string;
+}[] = [
+  {
+    plan: 'GRATUITO',
+    nombre: 'Gratuito',
+    descripcion: 'Para comenzar y probar la plataforma.',
+    estilo: 'border-slate-200 hover:border-slate-400',
+  },
+  {
+    plan: 'MAESTRO_PRO',
+    nombre: 'Maestro Pro',
+    descripcion: 'Herramientas avanzadas para docentes.',
+    estilo: 'border-blue-300 bg-blue-50/40 hover:border-blue-500',
+  },
+  {
+    plan: 'BASICO',
+    nombre: 'Básico',
+    descripcion: 'Recursos para instituciones educativas.',
+    estilo: 'border-slate-200 hover:border-blue-400',
+  },
+  {
+    plan: 'INSTITUCIONAL',
+    nombre: 'Institucional',
+    descripcion: 'Capacidad ampliada para organizaciones.',
+    estilo: 'border-slate-200 hover:border-blue-400',
+  },
+];
+
 export default function DocenteOrganizacionPage() {
   const router = useRouter();
   const API = getApiUrl();
@@ -19,6 +53,7 @@ export default function DocenteOrganizacionPage() {
   const [suscripcion, setSuscripcion] = useState<any>(null);
   const [precios, setPrecios] = useState<any>(null);
   const [periodoMeses, setPeriodoMeses] = useState<1 | 3 | 12>(1);
+  const [planSeleccionado, setPlanSeleccionado] = useState<PlanDisponible | null>(null);
   const [cargando, setCargando] = useState(true);
   const [cargandoCheckout, setCargandoCheckout] = useState(false);
   const [aprobandoPagoSandbox, setAprobandoPagoSandbox] = useState(false);
@@ -145,6 +180,7 @@ export default function DocenteOrganizacionPage() {
 
     if (paypalToken && esExito && !capturaEnProgreso.current) {
       capturaEnProgreso.current = true;
+      setPlanSeleccionado('MAESTRO_PRO');
       if (tab !== 'suscripcion') {
         setTab('suscripcion');
       }
@@ -279,7 +315,10 @@ export default function DocenteOrganizacionPage() {
     }
   };
 
-  const handleCrearCheckout = async (proveedor: 'MOCK_SANDBOX' | 'MERCADOPAGO' | 'PAYPAL' | 'LIVEES' | 'LIBELULA') => {
+  const handleCrearCheckout = async (
+    proveedor: 'MOCK_SANDBOX' | 'MERCADOPAGO' | 'PAYPAL' | 'LIVEES' | 'LIBELULA',
+    plan: Exclude<PlanDisponible, 'GRATUITO'>,
+  ) => {
     const token = getToken();
     setCargandoCheckout(true);
     setCheckoutUrl(null);
@@ -292,7 +331,7 @@ export default function DocenteOrganizacionPage() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          plan: 'MAESTRO_PRO',
+          plan,
           proveedor,
           periodoMeses: proveedor === 'LIBELULA' || proveedor === 'LIVEES' || proveedor === 'MOCK_SANDBOX' ? periodoMeses : 1,
         }),
@@ -401,17 +440,9 @@ export default function DocenteOrganizacionPage() {
               ← Dashboard
             </Link>
             <span className="text-slate-300">|</span>
-            <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-              💎 Mi Plan Docente & Suscripción
-              <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-blue-50 text-blue-700 border border-blue-200 uppercase">
-                Plan {org?.plan || 'GRATUITO'}
-              </span>
-            </h1>
+            <h1 className="text-xl font-bold text-slate-800">Planes y suscripción</h1>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-500 hidden sm:inline">
-              Cuenta: <strong>{org?.nombre || 'Mi Espacio Personal'}</strong>
-            </span>
             <Link
               href="/docente/dashboard"
               className="px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 text-sm font-medium rounded-lg transition"
@@ -466,6 +497,56 @@ export default function DocenteOrganizacionPage() {
         {/* TAB: SUSCRIPCIÓN Y PAGOS */}
         {tab === 'suscripcion' && (
           <div className="space-y-6">
+            {planSeleccionado === null ? (
+              <section className="space-y-6" aria-labelledby="planes-disponibles-titulo">
+                <header className="text-center">
+                  <h2 id="planes-disponibles-titulo" className="text-2xl font-bold tracking-tight text-slate-900">
+                    Elige el plan para tu organización
+                  </h2>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Selecciona un plan para consultar precios y opciones de pago.
+                  </p>
+                </header>
+
+                <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+                  {PLANES_DISPONIBLES.map(({ plan, nombre, descripcion, estilo }) => {
+                    const esPlanActual = suscripcion?.plan === plan;
+                    return (
+                      <button
+                        key={plan}
+                        type="button"
+                        onClick={() => setPlanSeleccionado(plan)}
+                        className={`flex min-h-56 flex-col items-center justify-center rounded-3xl border bg-white p-6 text-center shadow-sm transition hover:-translate-y-1 hover:shadow-md ${estilo}`}
+                      >
+                        {esPlanActual && (
+                          <span className="mb-3 rounded-full bg-green-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-green-700">
+                            Plan actual
+                          </span>
+                        )}
+                        <span className="text-lg font-bold text-slate-900">{nombre}</span>
+                        <span className="mt-2 text-sm leading-relaxed text-slate-500">{descripcion}</span>
+                        <span className="mt-5 text-xs font-bold text-blue-700">
+                          {esPlanActual ? 'Ver plan' : 'Seleccionar plan'} →
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : (
+            <>
+            <button
+              type="button"
+              onClick={() => {
+                setPlanSeleccionado(null);
+                setCheckoutUrl(null);
+                setPagoLibelula(null);
+                setPagoSandboxPendiente(null);
+              }}
+              className="text-sm font-semibold text-blue-700 hover:text-blue-900"
+            >
+              ← Volver a los planes
+            </button>
             {errorCapturaPayPal && (
                <div className="bg-red-50 p-4 rounded-lg flex flex-col md:flex-row items-center justify-between border border-red-200">
                   <span className="text-sm text-red-800 font-medium mb-3 md:mb-0">
@@ -487,7 +568,13 @@ export default function DocenteOrganizacionPage() {
                   <p className="text-xs font-semibold uppercase text-slate-400">Plan Actual</p>
                   <div className="flex items-center gap-3 mt-1">
                     <h2 className="text-2xl font-extrabold text-slate-800">
-                      {suscripcion?.plan === 'MAESTRO_PRO' ? 'Plan Maestro Pro' : 'Plan Gratuito'}
+                      {suscripcion?.plan === 'MAESTRO_PRO'
+                        ? 'Plan Maestro Pro'
+                        : suscripcion?.plan === 'BASICO'
+                          ? 'Plan Básico'
+                          : suscripcion?.plan === 'INSTITUCIONAL'
+                            ? 'Plan Institucional'
+                            : 'Plan Gratuito'}
                     </h2>
                     <span className={`px-3 py-1 text-xs font-bold rounded-full uppercase ${
                       suscripcion?.estadoSuscripcion === 'ACTIVA'
@@ -520,20 +607,30 @@ export default function DocenteOrganizacionPage() {
                     </p>
                   )}
                 </div>
-                {suscripcion?.plan !== 'MAESTRO_PRO' || suscripcion?.estadoSuscripcion === 'CANCELADA' || suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA' ? (
-                  <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white p-5 rounded-2xl shadow-lg shadow-blue-600/20 min-w-[220px] text-center">
-                    <p className="text-xs font-bold uppercase tracking-widest opacity-80">Plan Maestro Pro</p>
-                    <p className="text-3xl font-extrabold mt-1">Bs 50<span className="text-sm font-normal opacity-80"> / mes</span></p>
-                    <p className="text-xs opacity-75 mt-0.5">≈ $7.25 USD · Pago mensual</p>
-                    <p className="text-xs opacity-70 mt-1">Cancela cuando quieras</p>
-                  </div>
-                ) : (
-                  <div className="bg-green-50 border border-green-200 p-5 rounded-2xl text-center min-w-[180px]">
-                    <p className="text-xs font-semibold text-green-600 uppercase">Estado</p>
-                    <p className="text-lg font-extrabold text-green-700 mt-1">✓ Activo</p>
-                    <p className="text-xs text-green-600 mt-1">Acceso completo</p>
-                  </div>
-                )}
+                <div className="min-w-[180px] rounded-2xl border border-slate-200 bg-slate-50 p-5 text-center">
+                  <p className="text-xs font-semibold uppercase text-slate-500">Plan seleccionado</p>
+                  <p className="mt-1 text-lg font-extrabold text-slate-800">
+                    {planSeleccionado === 'MAESTRO_PRO'
+                      ? 'Maestro Pro'
+                      : planSeleccionado === 'BASICO'
+                        ? 'Básico'
+                        : planSeleccionado === 'INSTITUCIONAL'
+                          ? 'Institucional'
+                          : 'Gratuito'}
+                  </p>
+                  {suscripcion?.plan === planSeleccionado && (
+                    <p className="mt-1 text-xs font-semibold text-green-700">Este es tu plan actual</p>
+                  )}
+                  {planSeleccionado !== 'GRATUITO' && (() => {
+                    const plan = precios?.planes?.find((item: any) => item.plan === planSeleccionado);
+                    const precio = plan?.periodos?.find((item: any) => item.periodoMeses === periodoMeses);
+                    return precio ? (
+                      <p className="mt-3 text-xs font-semibold text-slate-600">
+                        {periodoMeses} {periodoMeses === 1 ? 'mes' : 'meses'}: Bs {Number(precio.bob).toFixed(2)}
+                      </p>
+                    ) : null;
+                  })()}
+                </div>
               </div>
             </div>
 
@@ -589,15 +686,26 @@ export default function DocenteOrganizacionPage() {
             </div>
 
             {/* Panel de upgrade o gestión */}
-            {(suscripcion?.plan !== 'MAESTRO_PRO' || suscripcion?.estadoSuscripcion === 'CANCELADA' || suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA') && (
+            {planSeleccionado === 'GRATUITO' && suscripcion?.plan !== 'GRATUITO' && (
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
+                Para volver al plan gratuito, cancela la renovación del plan actual. Conservarás el acceso hasta que termine el período contratado.
+              </div>
+            )}
+
+            {planSeleccionado !== 'GRATUITO' &&
+              (suscripcion?.plan !== planSeleccionado ||
+                suscripcion?.estadoSuscripcion === 'CANCELADA' ||
+                suscripcion?.estadoSuscripcion === 'EN_PERIODO_GRACIA') && (
               <div className="bg-gradient-to-r from-blue-50/50 to-white border border-blue-200 p-6 rounded-2xl space-y-4">
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900">Actualizar al Plan Maestro Pro</h3>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    Continuar con el plan {planSeleccionado === 'MAESTRO_PRO' ? 'Maestro Pro' : planSeleccionado === 'BASICO' ? 'Básico' : 'Institucional'}
+                  </h3>
                   <p className="text-sm text-slate-600 mt-1">
-                    Acceso ilimitado a evaluaciones, créditos de IA, contenido privado y más funciones avanzadas por un pago de <strong>Bs 50 al mes</strong>.
+                    Elige el período y el método de pago para activar el plan seleccionado.
                   </p>
                 </div>
-                <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-700">
+                {planSeleccionado === 'MAESTRO_PRO' && <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-700">
                   {[
                     'Almacenamiento ilimitado de evaluaciones',
                     'Créditos de IA ilimitados por mes',
@@ -612,7 +720,7 @@ export default function DocenteOrganizacionPage() {
                       <span className="text-blue-600 font-bold">✓</span> {f}
                     </li>
                   ))}
-                </ul>
+                </ul>}
 
                 {checkoutUrl && (
                   <div className="p-4 bg-white border border-blue-200 rounded-xl">
@@ -657,7 +765,7 @@ export default function DocenteOrganizacionPage() {
                     </label>
                   </div>
                   {(() => {
-                    const plan = precios?.planes?.find((item: any) => item.plan === 'MAESTRO_PRO');
+                    const plan = precios?.planes?.find((item: any) => item.plan === planSeleccionado);
                     const precio = plan?.periodos?.find((item: any) => item.periodoMeses === periodoMeses);
                     return precio ? (
                       <p className="text-sm text-blue-800">
@@ -668,7 +776,7 @@ export default function DocenteOrganizacionPage() {
                   })()}
                   <div className="flex flex-wrap gap-3">
                     <button
-                      onClick={() => handleCrearCheckout('LIBELULA')}
+                      onClick={() => handleCrearCheckout('LIBELULA', planSeleccionado as Exclude<PlanDisponible, 'GRATUITO'>)}
                       disabled={cargandoCheckout}
                       className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center gap-2 cursor-pointer"
                     >
@@ -676,7 +784,7 @@ export default function DocenteOrganizacionPage() {
                       <span>{cargandoCheckout ? 'Iniciando...' : 'Pagar en Bolivia (QR Simple / Tarjetas)'}</span>
                     </button>
                     <button
-                      onClick={() => handleCrearCheckout('MOCK_SANDBOX')}
+                      onClick={() => handleCrearCheckout('MOCK_SANDBOX', planSeleccionado as Exclude<PlanDisponible, 'GRATUITO'>)}
                       disabled={cargandoCheckout}
                       className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 text-slate-700 font-medium text-xs rounded-xl transition cursor-pointer"
                     >
@@ -687,20 +795,27 @@ export default function DocenteOrganizacionPage() {
 
                 <div className="flex flex-wrap gap-3 pt-2">
                   <button
-                    onClick={() => handleCrearCheckout('MERCADOPAGO')}
-                    disabled={cargandoCheckout}
+                    onClick={() => handleCrearCheckout('MERCADOPAGO', planSeleccionado as Exclude<PlanDisponible, 'GRATUITO'>)}
+                    disabled={cargandoCheckout || periodoMeses !== 1}
+                    title={periodoMeses !== 1 ? 'Mercado Pago permite pagos de un mes.' : undefined}
                     className="px-5 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow transition cursor-pointer"
                   >
-                    💳 Mercado Pago
-                  </button>
-                  <button
-                    onClick={() => handleCrearCheckout('PAYPAL')}
-                    disabled={cargandoCheckout}
-                    className="px-5 py-2.5 bg-yellow-400 hover:bg-yellow-500 disabled:opacity-50 text-slate-900 font-semibold text-sm rounded-xl shadow transition cursor-pointer"
-                  >
-                    🅿 PayPal (USD)
-                  </button>
+                  💳 Mercado Pago (1 mes)
+                </button>
+                <button
+                  onClick={() => handleCrearCheckout('PAYPAL', planSeleccionado as Exclude<PlanDisponible, 'GRATUITO'>)}
+                  disabled={cargandoCheckout || periodoMeses !== 1}
+                  title={periodoMeses !== 1 ? 'PayPal permite pagos de un mes.' : undefined}
+                  className="px-5 py-2.5 bg-yellow-400 hover:bg-yellow-500 disabled:opacity-50 text-slate-900 font-semibold text-sm rounded-xl shadow transition cursor-pointer"
+                >
+                  🅿 PayPal (USD · 1 mes)
+                </button>
                 </div>
+                {periodoMeses !== 1 && (
+                <p className="text-xs text-slate-500">
+                  Mercado Pago y PayPal solo permiten pagos mensuales. Selecciona 1 mes para usarlos; QR Simple y Sandbox permiten períodos de hasta 12 meses.
+                </p>
+                )}
                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 bg-white/70 p-3 rounded-xl border border-slate-200">
                   <strong className="text-slate-700">Medios admitidos en Bolivia:</strong>
                   <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded font-medium">QR Simple</span>
@@ -807,6 +922,8 @@ export default function DocenteOrganizacionPage() {
                   </table>
                 </div>
               </div>
+            )}
+            </>
             )}
           </div>
         )}
