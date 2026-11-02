@@ -171,6 +171,9 @@ export default function MiBibliotecaPage() {
     if (filtroEstado !== 'TODOS' && e.estado !== filtroEstado) return false;
     return true;
   });
+  const totalEvaluaciones = evaluaciones.length;
+  const publicadas = evaluaciones.filter((e) => e.estado === 'PUBLICADA').length;
+  const borradores = evaluaciones.filter((e) => e.estado === 'BORRADOR').length;
 
   return (
     <main className="flex-1 min-h-screen bg-slate-50 font-sans text-slate-800 p-8 space-y-8">
@@ -182,12 +185,20 @@ export default function MiBibliotecaPage() {
             Gestión completa y repositorio de tus evaluaciones creadas.
           </p>
         </div>
-        <Link
-          href="/docente/evaluacion/nueva"
-          className="inline-flex items-center gap-2 px-6 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-full shadow-lg shadow-blue-500/25 transition-colors w-max"
-        >
-          <span>➕</span> Crear Nueva Evaluación
-        </Link>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            href="/docente/reportes"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3.5 text-xs font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
+          >
+            📈 Reportes e informes
+          </Link>
+          <Link
+            href="/docente/dashboard"
+            className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-6 py-3.5 text-xs font-bold text-white shadow-lg shadow-blue-500/25 transition-colors hover:bg-blue-700"
+          >
+            <span>➕</span> Crear Nueva Evaluación
+          </Link>
+        </div>
       </div>
 
       {/* Toast Notificación */}
@@ -203,6 +214,21 @@ export default function MiBibliotecaPage() {
           {mensaje.texto}
         </div>
       )}
+
+      <section aria-label="Resumen de evaluaciones" className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-3xl font-black text-slate-900">{cargando ? '—' : totalEvaluaciones}</p>
+          <p className="mt-1 text-xs font-bold uppercase tracking-wider text-slate-400">Evaluaciones totales</p>
+        </div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-3xl font-black text-green-600">{cargando ? '—' : publicadas}</p>
+          <p className="mt-1 text-xs font-bold uppercase tracking-wider text-slate-400">Publicadas</p>
+        </div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-3xl font-black text-amber-600">{cargando ? '—' : borradores}</p>
+          <p className="mt-1 text-xs font-bold uppercase tracking-wider text-slate-400">Borradores</p>
+        </div>
+      </section>
 
       {/* Barra de Búsqueda y Filtros */}
       <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">

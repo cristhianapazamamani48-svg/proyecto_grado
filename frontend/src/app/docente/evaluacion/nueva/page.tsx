@@ -64,6 +64,11 @@ export default function NuevaEvaluacionPage() {
   });
 
   useEffect(() => {
+    const modoSolicitado = new URLSearchParams(window.location.search).get('modo');
+    if (modoSolicitado === 'MANUAL' || modoSolicitado === 'PDF' || modoSolicitado === 'TEMA') {
+      setModoCreacion(modoSolicitado);
+    }
+
     const token = localStorage.getItem('uub_docente_token');
     if (!token) {
       router.push('/docente/login');
