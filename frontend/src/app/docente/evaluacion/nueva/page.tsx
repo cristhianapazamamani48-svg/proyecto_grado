@@ -275,7 +275,7 @@ export default function NuevaEvaluacionPage() {
       <div className="flex-1 max-w-7xl w-full mx-auto p-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* COLUMNA IZQUIERDA: Añadir Elementos y Ajustes */}
-        <aside className="lg:col-span-4 space-y-4">
+        <aside className="lg:col-span-4 space-y-4 lg:sticky lg:top-[65px] lg:self-start lg:max-h-[calc(100vh-81px)] lg:overflow-y-auto">
           <h2 className="text-base font-bold text-slate-900 mb-2">Configuración y Elementos</h2>
 
           {/* Acordeón 1: Tipos de Pregunta */}
