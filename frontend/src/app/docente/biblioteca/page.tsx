@@ -23,8 +23,7 @@ import ConfiguracionEvaluacionModal, {
   type ConfiguracionEvaluacion,
   type EvaluacionConConfiguracion,
 } from '@/components/ConfiguracionEvaluacionModal';
-
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { getApiUrl } from '@/lib/api-config';
 
 function getToken() {
   return typeof window !== 'undefined' ? localStorage.getItem('uub_docente_token') : null;
@@ -68,7 +67,7 @@ export default function MiBibliotecaPage() {
     setCargando(true);
     setError('');
     try {
-      const res = await fetch(`${API}/evaluaciones`, {
+      const res = await fetch(`${getApiUrl()}/evaluaciones`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data: unknown = await res.json().catch(() => null);
@@ -121,7 +120,7 @@ export default function MiBibliotecaPage() {
   const handleDuplicar = async (id: number) => {
     const token = getToken();
     try {
-      const res = await fetch(`${API}/evaluaciones/${id}/duplicar`, {
+      const res = await fetch(`${getApiUrl()}/evaluaciones/${id}/duplicar`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -163,7 +162,7 @@ export default function MiBibliotecaPage() {
         Object.assign(body, configuracion);
       }
 
-      const res = await fetch(`${API}/evaluaciones/${evaluacion.idEvaluacion}`, {
+      const res = await fetch(`${getApiUrl()}/evaluaciones/${evaluacion.idEvaluacion}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -190,7 +189,7 @@ export default function MiBibliotecaPage() {
   const handleEliminar = async (id: number) => {
     const token = getToken();
     try {
-      const res = await fetch(`${API}/evaluaciones/${id}`, {
+      const res = await fetch(`${getApiUrl()}/evaluaciones/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -228,7 +227,7 @@ export default function MiBibliotecaPage() {
         return;
       }
 
-      const resConfig = await fetch(`${API}/evaluaciones/${evaluacion.idEvaluacion}`, {
+      const resConfig = await fetch(`${getApiUrl()}/evaluaciones/${evaluacion.idEvaluacion}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -247,7 +246,7 @@ export default function MiBibliotecaPage() {
         throw new Error(errorData.message || 'No se pudo guardar la configuración antes de lanzar la sesión');
       }
 
-      const resSesion = await fetch(`${API}/sesiones`, {
+      const resSesion = await fetch(`${getApiUrl()}/sesiones`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
