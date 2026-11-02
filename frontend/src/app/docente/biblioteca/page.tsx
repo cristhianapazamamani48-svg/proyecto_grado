@@ -68,11 +68,24 @@ export default function MiBibliotecaPage() {
     setCargando(true);
     setError('');
     try {
-      const res = await fetch(`${API}/api/evaluaciones/mis-evaluaciones`, {
+      const res = await fetch(`${API}/evaluaciones`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error('Error al cargar evaluaciones');
-      const data = (await res.json()) as EvaluacionBiblioteca[];
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message =
+          typeof data === 'object' && data !== null && 'message' in data
+            ? data.message
+            : null;
+        throw new Error(
+          typeof message === 'string'
+            ? message
+            : 'No se pudieron cargar las evaluaciones.',
+        );
+      }
+      if (!Array.isArray(data)) {
+        throw new Error('El servidor devolvió una respuesta inválida al cargar evaluaciones.');
+      }
       setEvaluaciones(data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Error de conexión');
@@ -108,7 +121,7 @@ export default function MiBibliotecaPage() {
   const handleDuplicar = async (id: number) => {
     const token = getToken();
     try {
-      const res = await fetch(`${API}/api/evaluaciones/${id}/duplicar`, {
+      const res = await fetch(`${API}/evaluaciones/${id}/duplicar`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -150,7 +163,7 @@ export default function MiBibliotecaPage() {
         Object.assign(body, configuracion);
       }
 
-      const res = await fetch(`${API}/api/evaluaciones/${evaluacion.idEvaluacion}`, {
+      const res = await fetch(`${API}/evaluaciones/${evaluacion.idEvaluacion}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -177,7 +190,7 @@ export default function MiBibliotecaPage() {
   const handleEliminar = async (id: number) => {
     const token = getToken();
     try {
-      const res = await fetch(`${API}/api/evaluaciones/${id}`, {
+      const res = await fetch(`${API}/evaluaciones/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -215,7 +228,7 @@ export default function MiBibliotecaPage() {
         return;
       }
 
-      const resConfig = await fetch(`${API}/api/evaluaciones/${evaluacion.idEvaluacion}`, {
+      const resConfig = await fetch(`${API}/evaluaciones/${evaluacion.idEvaluacion}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -234,7 +247,7 @@ export default function MiBibliotecaPage() {
         throw new Error(errorData.message || 'No se pudo guardar la configuración antes de lanzar la sesión');
       }
 
-      const resSesion = await fetch(`${API}/api/sesiones`, {
+      const resSesion = await fetch(`${API}/sesiones`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
