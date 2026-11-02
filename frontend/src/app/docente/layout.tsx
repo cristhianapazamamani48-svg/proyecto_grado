@@ -34,7 +34,6 @@ export default function DocenteLayout({ children }: { children: React.ReactNode 
     { label: 'Sesiones', href: '/docente/sesiones', icon: '🧑‍🎓' },
     { label: 'Reportes e informes', href: '/docente/reportes', icon: '📈' },
     { label: 'Mi Plan y Suscripción', href: '/docente/organizacion', icon: '💎' },
-    { label: 'Nueva evaluación', href: '/docente/evaluacion/nueva', icon: '➕' },
   ];
 
   return (
@@ -174,6 +173,18 @@ export default function DocenteLayout({ children }: { children: React.ReactNode 
 
       {/* Content Area */}
       <div className="flex-1 min-w-0 flex flex-col">{children}</div>
+
+      {pathname !== '/docente/evaluacion/nueva' && !pathname?.startsWith('/docente/evaluacion/') && (
+        <Link
+          href="/docente/dashboard"
+          aria-label="Crear nueva evaluación"
+          title="Crear nueva evaluación"
+          className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-3.5 text-sm font-bold text-white shadow-xl shadow-blue-600/30 transition hover:-translate-y-0.5 hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-300"
+        >
+          <span aria-hidden="true">＋</span>
+          <span className="hidden sm:inline">Nueva evaluación</span>
+        </Link>
+      )}
     </div>
   );
 }
