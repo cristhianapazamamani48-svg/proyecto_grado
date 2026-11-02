@@ -1,10 +1,35 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import ThemeToggle from '@/components/ThemeToggle';
 
 import { getApiUrl } from '@/lib/api-config';
+
+interface GoogleCredentialResponse {
+  credential?: string;
+}
+
+interface GoogleIdentityApi {
+  initialize: (options: {
+    client_id: string;
+    callback: (response: GoogleCredentialResponse) => void;
+  }) => void;
+  prompt: () => void;
+}
+
+interface AuthResponse {
+  message?: string;
+  token?: string;
+  usuario?: { nombre?: string };
+}
+
+declare global {
+  interface Window {
+    google?: { accounts: { id: GoogleIdentityApi } };
+  }
+}
 
 export default function DocenteLoginPage() {
   const [esRegistro, setEsRegistro] = useState(false);
@@ -15,6 +40,33 @@ export default function DocenteLoginPage() {
   const [cargando, setCargando] = useState(false);
   const router = useRouter();
 
+  const handleGoogleResponse = useCallback(async (response: GoogleCredentialResponse) => {
+    if (!response.credential) return;
+    setCargando(true);
+    setError('');
+    try {
+      const apiUrl = getApiUrl();
+      const res = await fetch(`${apiUrl}/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken: response.credential }),
+      });
+      const data = (await res.json()) as AuthResponse;
+      if (!res.ok) throw new Error(data.message || 'Error al autenticar con Google');
+      if (!data.token || !data.usuario?.nombre) {
+        throw new Error('La respuesta de autenticación de Google está incompleta.');
+      }
+
+      localStorage.setItem('uub_docente_token', data.token);
+      localStorage.setItem('uub_docente_nombre', data.usuario.nombre);
+      router.push('/docente/dashboard');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión con Google');
+    } finally {
+      setCargando(false);
+    }
+  }, [router]);
+
   useEffect(() => {
     const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
     if (!googleClientId) return;
@@ -24,8 +76,8 @@ export default function DocenteLoginPage() {
     script.async = true;
     script.defer = true;
     script.onload = () => {
-      if ((window as any).google?.accounts?.id) {
-        (window as any).google.accounts.id.initialize({
+      if (window.google?.accounts.id) {
+        window.google.accounts.id.initialize({
           client_id: googleClientId,
           callback: handleGoogleResponse,
         });
@@ -38,36 +90,12 @@ export default function DocenteLoginPage() {
         document.body.removeChild(script);
       }
     };
-  }, []);
-
-  const handleGoogleResponse = async (response: any) => {
-    if (!response?.credential) return;
-    setCargando(true);
-    setError('');
-    try {
-      const apiUrl = getApiUrl();
-      const res = await fetch(`${apiUrl}/auth/google`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken: response.credential }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Error al autenticar con Google');
-
-      localStorage.setItem('uub_docente_token', data.token);
-      localStorage.setItem('uub_docente_nombre', data.usuario.nombre);
-      router.push('/docente/dashboard');
-    } catch (err: any) {
-      setError(err.message || 'No se pudo iniciar sesión con Google');
-    } finally {
-      setCargando(false);
-    }
-  };
+  }, [handleGoogleResponse]);
 
   const handleGoogleSignIn = () => {
     const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (googleClientId && (window as any).google?.accounts?.id) {
-      (window as any).google.accounts.id.prompt();
+    if (googleClientId && window.google?.accounts.id) {
+      window.google.accounts.id.prompt();
     } else {
       setError('El inicio de sesión con Google no está configurado o aún no está disponible.');
     }
@@ -89,28 +117,34 @@ export default function DocenteLoginPage() {
         body: JSON.stringify(body),
       });
 
-      let data: any = {};
+      let data: AuthResponse = {};
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
-        data = await res.json();
+        data = (await res.json()) as AuthResponse;
       } else {
         const textErr = await res.text();
         throw new Error(`El servidor respondió con error (${res.status}): ${textErr.slice(0, 80)}`);
       }
       if (!res.ok) throw new Error(data.message || 'Error de autenticación');
+      if (!data.token || !data.usuario?.nombre) {
+        throw new Error('La respuesta de autenticación está incompleta.');
+      }
 
       localStorage.setItem('uub_docente_token', data.token);
       localStorage.setItem('uub_docente_nombre', data.usuario.nombre);
       router.push('/docente/dashboard');
-    } catch (err: any) {
-      setError(err.message || 'Error inesperado');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Error inesperado');
     } finally {
       setCargando(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 sm:p-6 font-sans">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 sm:p-6 font-sans relative">
+      <div className="absolute top-5 right-5 z-20">
+        <ThemeToggle />
+      </div>
       {/* Outer Card Container */}
       <div className="w-full max-w-4xl bg-white rounded-[32px] shadow-2xl shadow-slate-200/50 border border-slate-100 overflow-hidden min-h-[540px] flex flex-col md:flex-row relative transition-all duration-500">
         
@@ -145,7 +179,7 @@ export default function DocenteLoginPage() {
                       placeholder="Email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 outline-none transition-all"
                     />
                   </div>
 
@@ -162,7 +196,7 @@ export default function DocenteLoginPage() {
                       placeholder="Password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 outline-none transition-all"
                     />
                   </div>
 
@@ -170,13 +204,13 @@ export default function DocenteLoginPage() {
                   <button
                     type="submit"
                     disabled={cargando}
-                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-blue-600/25 cursor-pointer mt-2"
+                    className="w-full py-3.5 bg-purple-600 hover:bg-purple-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-purple-600/25 cursor-pointer mt-2"
                   >
                     {cargando ? 'Procesando...' : 'Login'}
                   </button>
 
                   <div className="text-right">
-                    <Link href="/olvide-password" className="text-xs text-blue-600 hover:underline">
+                    <Link href="/olvide-password" className="text-xs text-purple-600 dark:text-purple-400 hover:underline">
                       ¿Olvidaste tu contrasena?
                     </Link>
                   </div>
@@ -227,7 +261,7 @@ export default function DocenteLoginPage() {
             </div>
 
             {/* Diagonal Side (Right) */}
-            <div className="w-full md:w-5/12 bg-blue-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto">
+            <div className="w-full md:w-5/12 bg-purple-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto">
               <div className="relative z-10 flex justify-end">
                 <button
                   type="button"
@@ -251,7 +285,7 @@ export default function DocenteLoginPage() {
           /* VIEW 2: SIGN UP MODE (Solid Blue on Left, Form on Right) */
           <>
             {/* Diagonal Side (Left) */}
-            <div className="w-full md:w-5/12 bg-blue-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto order-2 md:order-1">
+            <div className="w-full md:w-5/12 bg-purple-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto order-2 md:order-1">
               <div className="relative z-10 flex justify-start">
                 <button
                   type="button"
@@ -299,7 +333,7 @@ export default function DocenteLoginPage() {
                       placeholder="Nombre Completo"
                       value={nombre}
                       onChange={(e) => setNombre(e.target.value)}
-                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 outline-none transition-all"
                     />
                   </div>
 
@@ -316,7 +350,7 @@ export default function DocenteLoginPage() {
                       placeholder="Email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 outline-none transition-all"
                     />
                   </div>
 
@@ -333,7 +367,7 @@ export default function DocenteLoginPage() {
                       placeholder="Password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 outline-none transition-all"
                     />
                   </div>
 
@@ -341,7 +375,7 @@ export default function DocenteLoginPage() {
                   <button
                     type="submit"
                     disabled={cargando}
-                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-blue-600/25 cursor-pointer mt-2"
+                    className="w-full py-3.5 bg-purple-600 hover:bg-purple-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-purple-600/25 cursor-pointer mt-2"
                   >
                     {cargando ? 'Procesando...' : 'Sign up'}
                   </button>
@@ -371,11 +405,11 @@ export default function DocenteLoginPage() {
 
                   <p className="text-[11px] text-slate-400 text-center leading-relaxed">
                     Al registrarte, confirmas que aceptas nuestros{' '}
-                    <Link href="/legal/terminos" target="_blank" className="text-blue-600 hover:underline">
+                    <Link href="/legal/terminos" target="_blank" className="text-purple-600 dark:text-purple-400 hover:underline">
                       Términos de Servicio
                     </Link>{' '}
                     y{' '}
-                    <Link href="/legal/privacidad" target="_blank" className="text-blue-600 hover:underline">
+                    <Link href="/legal/privacidad" target="_blank" className="text-purple-600 dark:text-purple-400 hover:underline">
                       Política de Privacidad
                     </Link>.
                   </p>

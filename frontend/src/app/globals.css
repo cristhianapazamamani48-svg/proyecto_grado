@@ -1,9 +1,6 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
   --color-background: var(--background);
@@ -12,9 +9,196 @@
   --font-mono: var(--font-geist-mono);
 }
 
+:root {
+  /* Blanco especial de diseño web moderno (off-white limpio y luminoso) */
+  --background: #fafafc;
+  --foreground: #0f172a;
+}
+
+.dark {
+  /* Fondo oscuro elegante con sutil matiz púrpura noche */
+  --background: #0d0b14;
+  --foreground: #f8fafc;
+  color-scheme: dark;
+}
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* =========================================================================
+   Contraste de Superficies: Blanco Web Puro vs Canvas Especial
+   ========================================================================= */
+
+.dark body,
+.dark main {
+  background-color: #0d0b14;
+  color: #f1f5f9;
+}
+
+/* Canvas del contenido principal */
+.bg-canvas-special {
+  background-color: #fafafc;
+}
+.dark .bg-canvas-special,
+.dark .bg-slate-50 {
+  background-color: #0d0b14 !important;
+}
+
+/* Tarjetas y superficies en blanco puro */
+.dark .bg-white {
+  background-color: #171424 !important;
+}
+
+.dark .bg-slate-100 {
+  background-color: #1f1a30 !important;
+}
+
+/* Bordes en modo oscuro */
+.dark .border-slate-100,
+.dark .border-slate-200 {
+  border-color: #26203a !important;
+}
+
+.dark .border-slate-300 {
+  border-color: #352c52 !important;
+}
+
+.dark hr {
+  border-color: #26203a !important;
+}
+
+/* Tipografía natural y nítida */
+.dark .text-slate-900 {
+  color: #ffffff !important;
+}
+
+.dark .text-slate-800 {
+  color: #f1f5f9 !important;
+}
+
+.dark .text-slate-700 {
+  color: #e2e8f0 !important;
+}
+
+.dark .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+
+.dark .text-slate-500 {
+  color: #94a3b8 !important;
+}
+
+.dark .text-slate-400 {
+  color: #64748b !important;
+}
+
+/* Formularios en modo oscuro */
+.dark input[type="text"],
+.dark input[type="number"],
+.dark input[type="email"],
+.dark input[type="password"],
+.dark input[type="search"],
+.dark textarea,
+.dark select {
+  background-color: #13101e !important;
+  border-color: #26203a !important;
+  color: #f8fafc !important;
+}
+
+.dark input:focus,
+.dark textarea:focus,
+.dark select:focus {
+  border-color: #8b5cf6 !important;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25) !important;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* =========================================================================
+   Colores Pasteles Combinados (Púrpura, Menta, Ámbar, Rosa)
+   ========================================================================= */
+
+/* Púrpura Pastel */
+.dark .bg-purple-50,
+.dark .bg-purple-50\/40,
+.dark .bg-purple-50\/50,
+.dark .bg-purple-50\/60,
+.dark .bg-purple-50\/70 {
+  background-color: rgba(109, 40, 217, 0.25) !important;
+  color: #d8b4fe !important;
+}
+
+/* Menta / Esmeralda Pastel */
+.dark .bg-emerald-50,
+.dark .bg-emerald-50\/40,
+.dark .bg-emerald-50\/50,
+.dark .bg-emerald-50\/60,
+.dark .bg-emerald-50\/70,
+.dark .bg-green-50 {
+  background-color: rgba(6, 78, 59, 0.3) !important;
+  color: #86efac !important;
+}
+
+/* Ámbar / Miel Pastel */
+.dark .bg-amber-50,
+.dark .bg-amber-50\/40,
+.dark .bg-amber-50\/50,
+.dark .bg-amber-50\/60,
+.dark .bg-amber-50\/70 {
+  background-color: rgba(120, 53, 15, 0.3) !important;
+  color: #fde68a !important;
+}
+
+/* Rosa / Coral Pastel */
+.dark .bg-rose-50,
+.dark .bg-red-50 {
+  background-color: rgba(159, 18, 57, 0.25) !important;
+  color: #fda4af !important;
+}
+
+/* Bordes pasteles en modo oscuro */
+.dark .border-purple-200 {
+  border-color: rgba(139, 92, 246, 0.4) !important;
+}
+
+.dark .border-emerald-200,
+.dark .border-green-200 {
+  border-color: rgba(16, 185, 129, 0.4) !important;
+}
+
+.dark .border-amber-200 {
+  border-color: rgba(245, 158, 11, 0.4) !important;
+}
+
+.dark .border-rose-200,
+.dark .border-red-200 {
+  border-color: rgba(244, 63, 94, 0.4) !important;
+}
+
+/* Interacciones hover en oscuro */
+.dark .hover\:bg-slate-50:hover {
+  background-color: #1f1a30 !important;
+}
+
+.dark .hover\:bg-slate-100:hover {
+  background-color: #292340 !important;
+}
+
+.dark header.bg-white {
+  background-color: #171424 !important;
+  border-color: #26203a !important;
+}
+
+.dark .shadow-sm,
+.dark .shadow-md,
+.dark .shadow-lg,
+.dark .shadow-xl {
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6) !important;
 }

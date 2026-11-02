@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import ThemeToggle from '@/components/ThemeToggle';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -28,6 +29,52 @@ interface ReglasExamen {
   detectarCopiar: boolean;
   detectarPegar: boolean;
   detectarRedimensionar: boolean;
+}
+
+interface RespuestaGuardadaAPI {
+  preguntaId: string | number;
+  opcionesSeleccionadas?: string[];
+  textoRespuesta?: string | null;
+  espaciosRespuestas?: Record<string, string>;
+}
+
+interface RespuestaCorrectaAPI {
+  idPregunta: string | number;
+  enunciado: string;
+  opcionesCorrectas?: string[];
+  espaciosValidos?: { numeroEspacio: number; respuestas: string[] }[];
+}
+
+interface ResultadoExamen {
+  message?: string;
+  notaFinal: number;
+  puntajeTotalObtenido: number;
+  puntajeMaximoPosible: number;
+  mostrarResultados: boolean;
+  mostrarRespuestas: boolean;
+  respuestasCorrectas?: RespuestaCorrectaAPI[];
+}
+
+interface EstadoSalaAPI {
+  estadoSesion: 'PENDIENTE' | 'ACTIVA' | 'FINALIZADA';
+}
+
+interface EstadoParticipanteAPI extends EstadoSalaAPI {
+  message?: string;
+  estadoParticipante?: string;
+}
+
+interface IntentoExamenAPI {
+  message?: string;
+  intentoId: string;
+  nombreParticipante?: string;
+  nombreEvaluacion?: string;
+  preguntas?: PreguntaExamen[];
+  reglas?: Partial<ReglasExamen>;
+  tiempoTotal?: number | null;
+  tiempoPorPregunta?: number | null;
+  tiempoRestanteTotal?: number | null;
+  respuestasGuardadas?: RespuestaGuardadaAPI[];
 }
 
 export default function ExamenPlayerPage() {
@@ -63,11 +110,10 @@ export default function ExamenPlayerPage() {
   const [finalizado, setFinalizado] = useState(false);
   const [yaEntregado, setYaEntregado] = useState(false);
   const [sesionCerrada, setSesionCerrada] = useState(false);
-  const [resultado, setResultado] = useState<any>(null);
+  const [resultado, setResultado] = useState<ResultadoExamen | null>(null);
   const [modoRevision, setModoRevision] = useState(false);
 
   // Estados de Cronómetro
-  const [tiempoTotalSegundos, setTiempoTotalSegundos] = useState<number | null>(null);
   const [tiempoPorPreguntaSegundos, setTiempoPorPreguntaSegundos] = useState<number | null>(null);
   const [segundosRestantesTotal, setSegundosRestantesTotal] = useState<number | null>(null);
   const [segundosRestantesPregunta, setSegundosRestantesPregunta] = useState<number | null>(null);
@@ -107,7 +153,7 @@ export default function ExamenPlayerPage() {
         const estadoRes = await fetch(`${API}/sesiones/intento/estado`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const estadoData = await estadoRes.json();
+        const estadoData = (await estadoRes.json()) as EstadoParticipanteAPI;
         if (!estadoRes.ok) throw new Error(estadoData.message || 'No fue posible consultar la sala.');
 
         setEstadoSala(estadoData.estadoSesion);
@@ -130,18 +176,17 @@ export default function ExamenPlayerPage() {
         const res = await fetch(`${API}/sesiones/intento/iniciar`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const data = await res.json();
+        const data = (await res.json()) as IntentoExamenAPI;
         if (!res.ok) throw new Error(data.message || 'Error al iniciar intento de examen');
 
         setIntentoId(data.intentoId);
         setNombreEstudiante(data.nombreParticipante || '');
         setNombreEvaluacion(data.nombreEvaluacion || '');
         setPreguntas(data.preguntas || []);
-        if (data.reglas) setReglas(data.reglas);
+        if (data.reglas) setReglas((actuales) => ({ ...actuales, ...data.reglas }));
 
         // Configuración de tiempos
-        setTiempoTotalSegundos(data.tiempoTotal);
-        setTiempoPorPreguntaSegundos(data.tiempoPorPregunta);
+        setTiempoPorPreguntaSegundos(data.tiempoPorPregunta ?? null);
 
         if (data.tiempoRestanteTotal !== null && data.tiempoRestanteTotal !== undefined) {
           setSegundosRestantesTotal(data.tiempoRestanteTotal);
@@ -154,9 +199,9 @@ export default function ExamenPlayerPage() {
         }
 
         // Mapear respuestas previas
-        const mapResp: Record<string, any> = {};
+        const mapResp: Record<string, { opciones: string[]; texto?: string; espacios?: Record<string, string> }> = {};
         if (data.respuestasGuardadas) {
-          data.respuestasGuardadas.forEach((r: any) => {
+          data.respuestasGuardadas.forEach((r) => {
             mapResp[r.preguntaId] = {
               opciones: r.opcionesSeleccionadas || [],
               texto: r.textoRespuesta || '',
@@ -165,8 +210,8 @@ export default function ExamenPlayerPage() {
           });
         }
         setRespuestas(mapResp);
-      } catch (err: any) {
-        setError(err.message || 'Ocurrió un error al cargar la evaluación.');
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Ocurrió un error al cargar la evaluación.');
       } finally {
         setCargando(false);
       }
@@ -187,7 +232,7 @@ export default function ExamenPlayerPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) return;
-        const data = await res.json();
+        const data = (await res.json()) as EstadoSalaAPI;
         if (data.estadoSesion === 'ACTIVA') {
           window.location.reload();
         } else if (data.estadoSesion === 'FINALIZADA') {
@@ -217,13 +262,13 @@ export default function ExamenPlayerPage() {
         body: JSON.stringify({ intentoId }),
       });
 
-      const data = await res.json();
+      const data = (await res.json()) as ResultadoExamen;
       if (!res.ok) throw new Error(data.message || 'Error al finalizar evaluación');
 
       setResultado(data);
       setFinalizado(true);
-    } catch (err: any) {
-      setError(err.message || 'Ocurrió un error al entregar la evaluación.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Ocurrió un error al entregar la evaluación.');
     } finally {
       setCargando(false);
     }
@@ -253,8 +298,6 @@ export default function ExamenPlayerPage() {
   // Cronómetro Por Pregunta (tiempoPorPregunta)
   useEffect(() => {
     if (estadoSala !== 'ACTIVA' || finalizado || !tiempoPorPreguntaSegundos) return;
-
-    setSegundosRestantesPregunta(tiempoPorPreguntaSegundos);
 
     timerPreguntaRef.current = setInterval(() => {
       setSegundosRestantesPregunta((prev) => {
@@ -634,19 +677,19 @@ export default function ExamenPlayerPage() {
 
               {modoRevision && (
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {resultado.respuestasCorrectas.map((r: any, idx: number) => (
+                  {resultado.respuestasCorrectas.map((r, idx) => (
                     <div key={r.idPregunta} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-1">
                       <p className="font-bold text-slate-800">
                         {idx + 1}. {r.enunciado}
                       </p>
-                      {r.opcionesCorrectas?.length > 0 && (
+                      {r.opcionesCorrectas && r.opcionesCorrectas.length > 0 && (
                         <p className="text-green-700 font-semibold">
                           Correcta: {r.opcionesCorrectas.join(', ')}
                         </p>
                       )}
-                      {r.espaciosValidos?.length > 0 && (
+                      {r.espaciosValidos && r.espaciosValidos.length > 0 && (
                         <p className="text-green-700 font-semibold">
-                          Espacios válidos: {r.espaciosValidos.map((e: any) => `[${e.numeroEspacio}]: ${e.respuestas.join(' / ')}`).join(' | ')}
+                          Espacios válidos: {r.espaciosValidos.map((e) => `[${e.numeroEspacio}]: ${e.respuestas.join(' / ')}`).join(' | ')}
                         </p>
                       )}
                     </div>
@@ -706,6 +749,7 @@ export default function ExamenPlayerPage() {
         </div>
 
         <div className="flex items-center gap-4">
+          <ThemeToggle />
           {/* Cronómetro */}
           {tiempoRestanteActivo !== null && (
             <div

@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import ThemeToggle from '@/components/ThemeToggle';
 import { getApiUrl } from '@/lib/api-config';
 
 type Modo = 'examen' | 'institucion';
@@ -25,15 +26,9 @@ function UnirseContent() {
   const [cargando, setCargando] = useState(false);
   const [mensaje, setMensaje] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
 
-  const getToken = () => {
+  const getToken = useCallback(() => {
     return typeof window !== 'undefined' ? localStorage.getItem('uub_docente_token') : null;
-  };
-
-  useEffect(() => {
-    if (tokenInvitacion && getToken()) {
-      handleAceptarToken(tokenInvitacion);
-    }
-  }, [tokenInvitacion]);
+  }, []);
 
   const cambiarModo = (nuevo: Modo) => {
     if (nuevo === modo) return;
@@ -75,14 +70,14 @@ function UnirseContent() {
       }
 
       router.push(`/examen/${codigo}`);
-    } catch (err) {
+    } catch {
       setMensaje({ tipo: 'error', texto: 'Error de conexión. Inténtalo de nuevo.' });
     } finally {
       setCargando(false);
     }
   };
 
-  const handleAceptarToken = async (tok: string) => {
+  const handleAceptarToken = useCallback(async (tok: string) => {
     const jwt = getToken();
     if (!jwt) {
       setMensaje({
@@ -105,12 +100,18 @@ function UnirseContent() {
       } else {
         setMensaje({ tipo: 'error', texto: data.message || 'Error al procesar la invitación.' });
       }
-    } catch (err) {
+    } catch {
       setMensaje({ tipo: 'error', texto: 'Error de conexión.' });
     } finally {
       setCargando(false);
     }
-  };
+  }, [API, getToken, router]);
+
+  useEffect(() => {
+    if (tokenInvitacion && getToken()) {
+      queueMicrotask(() => void handleAceptarToken(tokenInvitacion));
+    }
+  }, [tokenInvitacion, getToken, handleAceptarToken]);
 
   const handleUnirseConCodigo = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,7 +144,7 @@ function UnirseContent() {
       } else {
         setMensaje({ tipo: 'error', texto: data.message || 'Código inválido o inactivo.' });
       }
-    } catch (err) {
+    } catch {
       setMensaje({ tipo: 'error', texto: 'Error de conexión.' });
     } finally {
       setCargando(false);
@@ -151,19 +152,22 @@ function UnirseContent() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 sm:p-6 font-sans">
+    <div className="min-h-screen bg-[#fafafc] flex items-center justify-center p-4 sm:p-6 font-sans relative">
+      <div className="absolute top-5 right-5 z-20">
+        <ThemeToggle />
+      </div>
       {/* Outer Card Container */}
-      <div className="w-full max-w-4xl bg-white rounded-[32px] shadow-2xl shadow-blue-500/10 border border-slate-100 overflow-hidden min-h-[520px] flex flex-col md:flex-row relative">
+      <div className="w-full max-w-4xl bg-white rounded-[32px] shadow-2xl shadow-purple-500/10 border border-slate-100 overflow-hidden min-h-[520px] flex flex-col md:flex-row relative">
 
         {/* Left Side: Form Area */}
         <div className="w-full md:w-7/12 p-8 sm:p-12 flex flex-col justify-center z-10">
           <div className="max-w-md w-full mx-auto space-y-6">
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <div className="w-8 h-8 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-md shadow-blue-600/30">
+                <div className="w-8 h-8 bg-purple-600 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-md shadow-purple-600/30">
                   U
                 </div>
-                <span className="text-xs font-bold uppercase tracking-widest text-blue-600">
+                <span className="text-xs font-bold uppercase tracking-widest text-purple-600">
                   {modo === 'examen' ? 'Participantes' : 'Instituciones'}
                 </span>
               </div>
@@ -185,7 +189,7 @@ function UnirseContent() {
                 aria-pressed={modo === 'examen'}
                 className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   modo === 'examen'
-                    ? 'bg-white text-blue-600 shadow-sm'
+                    ? 'bg-white text-purple-600 shadow-sm'
                     : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
@@ -197,7 +201,7 @@ function UnirseContent() {
                 aria-pressed={modo === 'institucion'}
                 className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   modo === 'institucion'
-                    ? 'bg-white text-blue-600 shadow-sm'
+                    ? 'bg-white text-purple-600 shadow-sm'
                     : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
@@ -231,7 +235,7 @@ function UnirseContent() {
                     placeholder="EJ. AB3C7D"
                     value={codigoExamen}
                     onChange={(e) => setCodigoExamen(e.target.value.toUpperCase())}
-                    className="w-full px-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm font-mono font-bold text-slate-800 tracking-[0.3em] placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all uppercase"
+                    className="w-full px-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm font-mono font-bold text-slate-800 tracking-[0.3em] placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 outline-none transition-all uppercase"
                   />
                 </div>
 
@@ -247,14 +251,14 @@ function UnirseContent() {
                     placeholder="Nombres y apellidos"
                     value={nombreCompleto}
                     onChange={(e) => setNombreCompleto(e.target.value)}
-                    className="w-full px-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                    className="w-full px-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 outline-none transition-all"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={cargando}
-                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-blue-600/25 cursor-pointer mt-2"
+                  className="w-full py-3.5 bg-purple-600 hover:bg-purple-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-purple-600/25 cursor-pointer mt-2"
                 >
                   {cargando ? 'Ingresando...' : 'Comenzar Examen'}
                 </button>
@@ -273,7 +277,7 @@ function UnirseContent() {
                     </p>
                     <Link
                       href="/docente/login"
-                      className="block w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-2xl text-center shadow-lg shadow-blue-600/25 transition-all"
+                      className="block w-full py-3.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-sm rounded-2xl text-center shadow-lg shadow-purple-600/25 transition-all"
                     >
                       Iniciar Sesión Docente →
                     </Link>
@@ -295,14 +299,14 @@ function UnirseContent() {
                     placeholder="CÓDIGO DE INSTITUCIÓN (ej. ABC12345)"
                     value={codigoInstitucion}
                     onChange={(e) => setCodigoInstitucion(e.target.value.toUpperCase())}
-                    className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm font-mono font-bold text-slate-800 tracking-wider placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all uppercase"
+                    className="w-full pl-11 pr-4 py-3.5 bg-slate-100/70 border border-transparent rounded-2xl text-sm font-mono font-bold text-slate-800 tracking-wider placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 outline-none transition-all uppercase"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={cargando}
-                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-blue-600/25 cursor-pointer mt-2"
+                  className="w-full py-3.5 bg-purple-600 hover:bg-purple-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-sm rounded-2xl transition-all shadow-lg shadow-purple-600/25 cursor-pointer mt-2"
                 >
                   {cargando ? 'Procesando...' : 'Unirse con Código'}
                 </button>
@@ -337,7 +341,7 @@ function UnirseContent() {
         </div>
 
         {/* Right Side: Diagonal Polygon Section */}
-        <div className="w-full md:w-5/12 bg-blue-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto">
+        <div className="w-full md:w-5/12 bg-purple-600 text-white relative overflow-hidden flex flex-col justify-between p-8 sm:p-12 min-h-[220px] md:min-h-auto">
           <div className="relative z-10 flex justify-end">
             <Link
               href="/docente/login"
@@ -352,7 +356,7 @@ function UnirseContent() {
             <h3 className="text-2xl font-bold tracking-tight">
               {modo === 'examen' ? 'Evaluación en Línea' : 'Acceso Institucional'}
             </h3>
-            <p className="text-xs text-blue-100 leading-relaxed max-w-xs">
+            <p className="text-xs text-purple-100 leading-relaxed max-w-xs">
               {modo === 'examen'
                 ? 'Ingresa el código de sesión y tu nombre para rendir la evaluación. Tus respuestas se guardan automáticamente.'
                 : 'Únete a la organización de tu universidad o colegio para colaborar y gestionar evaluaciones.'}
@@ -367,7 +371,7 @@ function UnirseContent() {
 
 export default function UnirsePage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-slate-50 flex items-center justify-center text-blue-600 font-bold">Cargando...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#fafafc] flex items-center justify-center text-purple-600 font-bold">Cargando...</div>}>
       <UnirseContent />
     </Suspense>
   );

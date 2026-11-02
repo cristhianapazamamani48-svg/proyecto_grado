@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import ThemeToggle from '@/components/ThemeToggle';
 
 export default function Home() {
   return (
@@ -6,25 +7,28 @@ export default function Home() {
       {/* Header */}
       <header className="flex items-center justify-between px-8 py-4 border-b border-slate-100 flex-shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-sm shadow-blue-500/30">
+          <div className="w-8 h-8 bg-gradient-to-tr from-purple-600 to-violet-600 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-sm shadow-purple-500/30">
             U
           </div>
           <span className="text-lg font-bold text-slate-900 tracking-tight">UUB</span>
           <span className="hidden sm:inline text-xs text-slate-400 font-medium ml-1">Evaluaciones Académicas</span>
         </div>
-        <Link
-          href="/docente/login"
-          className="px-4 py-2 bg-slate-900 hover:bg-slate-700 text-white text-sm font-medium rounded-full transition-colors shadow-sm"
-        >
-          Acceso Docente
-        </Link>
+        <div className="flex items-center gap-3">
+          <ThemeToggle />
+          <Link
+            href="/docente/login"
+            className="px-4 py-2 bg-slate-900 dark:bg-purple-600 hover:bg-slate-700 dark:hover:bg-purple-500 text-white text-sm font-medium rounded-full transition-colors shadow-sm"
+          >
+            Acceso Docente
+          </Link>
+        </div>
       </header>
 
       {/* Body */}
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 min-h-0">
 
         {/* Left — Hero */}
-        <div className="flex flex-col justify-center px-10 py-8 bg-gradient-to-br from-blue-600 to-blue-700 text-white order-2 md:order-1">
+        <div className="flex flex-col justify-center px-10 py-8 bg-gradient-to-br from-purple-600 to-violet-800 text-white order-2 md:order-1">
           <div className="max-w-md">
             <span className="inline-block mb-4 px-3 py-1 bg-white/15 text-white text-xs font-semibold rounded-full uppercase tracking-widest">
               Sistema de Evaluaciones
@@ -69,7 +73,7 @@ export default function Home() {
 
             <p className="mt-6 text-center text-xs text-slate-400">
               ¿Eres docente?{' '}
-              <Link href="/docente/login" className="text-blue-600 font-semibold hover:underline">
+              <Link href="/docente/login" className="text-purple-600 dark:text-purple-400 font-semibold hover:underline">
                 Accede a tu panel
               </Link>
             </p>
@@ -81,19 +85,19 @@ export default function Home() {
       <footer className="flex-shrink-0 px-6 sm:px-8 py-3.5 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-slate-500">
         <span>© {new Date().getFullYear()} Proyecto UUB — Evaluaciones Académicas</span>
         <div className="flex items-center gap-4 text-[11px] text-slate-400">
-          <Link href="/legal/aviso-legal" className="hover:text-slate-700 transition-colors">
+          <Link href="/legal/aviso-legal" className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
             Aviso Legal
           </Link>
           <span>·</span>
-          <Link href="/legal/privacidad" className="hover:text-slate-700 transition-colors">
+          <Link href="/legal/privacidad" className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
             Privacidad
           </Link>
           <span>·</span>
-          <Link href="/legal/cookies" className="hover:text-slate-700 transition-colors">
+          <Link href="/legal/cookies" className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
             Cookies
           </Link>
           <span>·</span>
-          <Link href="/legal/terminos" className="hover:text-slate-700 transition-colors">
+          <Link href="/legal/terminos" className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
             Términos
           </Link>
         </div>

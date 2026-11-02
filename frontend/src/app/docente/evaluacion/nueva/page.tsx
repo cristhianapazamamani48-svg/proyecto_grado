@@ -51,9 +51,9 @@ export default function NuevaEvaluacionPage() {
   const [idiomaPendiente, setIdiomaPendiente] = useState<string | null>(null);
   const [idiomaConfirmado, setIdiomaConfirmado] = useState('');
   
-  const [mostrarResultados, setMostrarResultados] = useState(true);
-  const [mostrarRespuestas, setMostrarRespuestas] = useState(false);
-  const [permitirRevision, setPermitirRevision] = useState(false);
+  const mostrarResultados = true;
+  const mostrarRespuestas = false;
+  const permitirRevision = false;
 
   const [preguntas, setPreguntas] = useState<PreguntaForm[]>([]);
   const [cargando, setCargando] = useState(false);
@@ -66,7 +66,7 @@ export default function NuevaEvaluacionPage() {
   useEffect(() => {
     const modoSolicitado = new URLSearchParams(window.location.search).get('modo');
     if (modoSolicitado === 'MANUAL' || modoSolicitado === 'PDF' || modoSolicitado === 'TEMA') {
-      setModoCreacion(modoSolicitado);
+      queueMicrotask(() => setModoCreacion(modoSolicitado));
     }
 
     const token = localStorage.getItem('uub_docente_token');
@@ -141,24 +141,38 @@ export default function NuevaEvaluacionPage() {
     setPreguntas(preguntas.filter((_, i) => i !== index));
   };
 
-  const handlePreguntaChange = (index: number, field: string, value: any) => {
-    const copia = [...preguntas];
-    (copia[index] as any)[field] = value;
-    setPreguntas(copia);
+  const handlePreguntaChange = <K extends keyof PreguntaForm>(
+    index: number,
+    field: K,
+    value: PreguntaForm[K],
+  ) => {
+    setPreguntas((actuales) =>
+      actuales.map((pregunta, preguntaIndex) =>
+        preguntaIndex === index ? { ...pregunta, [field]: value } : pregunta,
+      ),
+    );
   };
 
-  const handleOpcionChange = (pIndex: number, oIndex: number, field: string, value: any) => {
-    const copia = [...preguntas];
-    const opcs = [...copia[pIndex].opciones];
-
-    if (field === 'esCorrecta' && (copia[pIndex].tipo === 'OPCION_MULTIPLE' || copia[pIndex].tipo === 'VERDADERO_FALSO')) {
-      opcs.forEach((o, i) => (o.esCorrecta = i === oIndex));
-    } else {
-      (opcs[oIndex] as any)[field] = value;
-    }
-
-    copia[pIndex].opciones = opcs;
-    setPreguntas(copia);
+  const handleOpcionChange = <K extends keyof OpcionForm>(
+    pIndex: number,
+    oIndex: number,
+    field: K,
+    value: OpcionForm[K],
+  ) => {
+    setPreguntas((actuales) =>
+      actuales.map((pregunta, preguntaIndex) => {
+        if (preguntaIndex !== pIndex) return pregunta;
+        const esRespuestaUnica =
+          pregunta.tipo === 'OPCION_MULTIPLE' || pregunta.tipo === 'VERDADERO_FALSO';
+        const opciones = pregunta.opciones.map((opcion, opcionIndex) => {
+          if (field === 'esCorrecta' && esRespuestaUnica) {
+            return { ...opcion, esCorrecta: opcionIndex === oIndex };
+          }
+          return opcionIndex === oIndex ? { ...opcion, [field]: value } : opcion;
+        });
+        return { ...pregunta, opciones };
+      }),
+    );
   };
 
   const agregarOpcion = (pIndex: number) => {
@@ -217,10 +231,21 @@ export default function NuevaEvaluacionPage() {
     setPreguntas(copia);
   };
 
-  const handleEspacioPropChange = (pIndex: number, eIndex: number, field: keyof EspacioForm, value: any) => {
-    const copia = [...preguntas];
-    (copia[pIndex].espacios[eIndex] as any)[field] = value;
-    setPreguntas(copia);
+  const handleEspacioPropChange = <K extends keyof EspacioForm>(
+    pIndex: number,
+    eIndex: number,
+    field: K,
+    value: EspacioForm[K],
+  ) => {
+    setPreguntas((actuales) =>
+      actuales.map((pregunta, preguntaIndex) => {
+        if (preguntaIndex !== pIndex) return pregunta;
+        const espacios = pregunta.espacios.map((espacio, espacioIndex) =>
+          espacioIndex === eIndex ? { ...espacio, [field]: value } : espacio,
+        );
+        return { ...pregunta, espacios };
+      }),
+    );
   };
 
   const generarEvaluacion = async (idioma?: string) => {
@@ -366,17 +391,17 @@ export default function NuevaEvaluacionPage() {
       if (!res.ok) throw new Error(data.message || 'Error al guardar la evaluación.');
 
       router.push('/docente/dashboard');
-    } catch (err: any) {
-      setError(err.message || 'Ocurrió un error al guardar.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Ocurrió un error al guardar.');
     } finally {
       setCargando(false);
     }
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
+    <main className="min-h-screen bg-[#fafafc] dark:bg-[#0d0b14] text-slate-800 dark:text-slate-100 flex flex-col font-sans">
       {/* Header Bar */}
-      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm sticky top-0 z-20">
+      <header className="bg-white dark:bg-[#171424] border-b border-slate-200 dark:border-slate-800 px-8 py-4 flex items-center justify-between shadow-sm sticky top-0 z-20">
         <div className="flex items-center space-x-4">
           <Link href="/docente/dashboard" className="text-slate-400 hover:text-slate-700 text-sm font-medium transition-colors">
             ← Volver al Dashboard
@@ -389,7 +414,7 @@ export default function NuevaEvaluacionPage() {
           <button
             onClick={guardarEvaluacion}
             disabled={cargando}
-            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-full shadow-lg shadow-blue-500/25 transition-colors disabled:opacity-50"
+            className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-sm rounded-full shadow-lg shadow-purple-500/25 transition-colors disabled:opacity-50"
           >
             {cargando ? 'Guardando...' : 'Guardar Evaluación'}
           </button>
@@ -434,8 +459,8 @@ export default function NuevaEvaluacionPage() {
               onClick={() => setModoCreacion(modo)}
               className={`rounded-2xl border p-4 text-left transition-colors ${
                 modoCreacion === modo
-                  ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100'
-                  : 'border-slate-200 bg-white hover:border-blue-300'
+                  ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/30 ring-2 ring-blue-100 dark:ring-blue-900 text-purple-900 dark:text-blue-100'
+                  : 'border-slate-200 bg-white hover:border-purple-300 dark:hover:border-purple-700'
               }`}
             >
               <span className="text-lg" aria-hidden="true">{icono}</span>
@@ -482,7 +507,7 @@ export default function NuevaEvaluacionPage() {
               onChange={(event) => setTemaGeneracion(event.target.value)}
               rows={2}
               placeholder="Ej.: La fotosíntesis y sus etapas"
-              className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 focus:border-blue-500 focus:outline-none"
+              className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 focus:border-purple-500 focus:outline-none"
             />
           </div>
         )}
@@ -498,7 +523,7 @@ export default function NuevaEvaluacionPage() {
                     checked={tiposPreguntaGeneracion.includes(tipo)}
                     disabled={generando}
                     onChange={() => toggleTipoPreguntaGeneracion(tipo)}
-                    className="accent-blue-600"
+                    className="accent-purple-600"
                   />
                   {etiqueta}
                 </label>
@@ -515,7 +540,7 @@ export default function NuevaEvaluacionPage() {
               value={cantidadPreguntasGeneracion}
               disabled={generando}
               onChange={(event) => setCantidadPreguntasGeneracion(Number(event.target.value))}
-              className="mt-2 w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none"
+              className="mt-2 w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-purple-500 focus:outline-none"
             />
             <p className="mt-3 text-xs text-slate-500">
               Se conservará el idioma del material. El tema o texto extraído del PDF se enviará a Claude para generar las preguntas.
@@ -543,7 +568,7 @@ export default function NuevaEvaluacionPage() {
               type="button"
               disabled={!estadoGeneracion?.disponible || generando}
               onClick={() => void generarEvaluacion(idiomaPendiente !== null ? idiomaConfirmado : undefined)}
-              className="mt-4 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+              className="mt-4 rounded-xl bg-purple-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 shadow-md shadow-purple-500/20"
             >
               {generando
                 ? 'Generando...'
@@ -571,7 +596,7 @@ export default function NuevaEvaluacionPage() {
             <button
               type="button"
               onClick={() => toggleAcordeon('elementos')}
-              className="w-full px-5 py-3.5 bg-slate-50 hover:bg-slate-100 font-bold text-slate-800 text-left flex items-center justify-between text-sm border-b border-slate-200 transition-colors"
+              className="w-full px-5 py-3.5 bg-[#fafafc] hover:bg-slate-100 font-bold text-slate-800 text-left flex items-center justify-between text-sm border-b border-slate-200 transition-colors"
             >
               <span>+ Añadir Preguntas</span>
               <span className="text-xs text-slate-400">{acordeonAbierto.elementos ? '▲' : '▼'}</span>
@@ -583,7 +608,7 @@ export default function NuevaEvaluacionPage() {
                   <button
                     type="button"
                     onClick={() => agregarPregunta('OPCION_MULTIPLE')}
-                    className="w-full text-left px-3.5 py-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-slate-700 hover:text-blue-700 transition-all flex items-center justify-between"
+                    className="w-full text-left px-3.5 py-2.5 bg-[#fafafc] dark:bg-slate-800/60 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-slate-200 dark:border-slate-700 hover:border-purple-300 dark:hover:border-purple-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-purple-700 dark:hover:text-purple-300 transition-all flex items-center justify-between"
                   >
                     <span>🔘 Opción Múltiple</span>
                     <span className="text-slate-400 font-normal text-[11px]">Única respuesta</span>
@@ -591,7 +616,7 @@ export default function NuevaEvaluacionPage() {
                   <button
                     type="button"
                     onClick={() => agregarPregunta('SELECCION_MULTIPLE')}
-                    className="w-full text-left px-3.5 py-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-slate-700 hover:text-blue-700 transition-all flex items-center justify-between"
+                    className="w-full text-left px-3.5 py-2.5 bg-[#fafafc] dark:bg-slate-800/60 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-slate-200 dark:border-slate-700 hover:border-purple-300 dark:hover:border-purple-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-purple-700 dark:hover:text-purple-300 transition-all flex items-center justify-between"
                   >
                     <span>☑️ Selección Múltiple</span>
                     <span className="text-slate-400 font-normal text-[11px]">Varias respuestas</span>
@@ -599,7 +624,7 @@ export default function NuevaEvaluacionPage() {
                   <button
                     type="button"
                     onClick={() => agregarPregunta('VERDADERO_FALSO')}
-                    className="w-full text-left px-3.5 py-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-slate-700 hover:text-blue-700 transition-all flex items-center justify-between"
+                    className="w-full text-left px-3.5 py-2.5 bg-[#fafafc] dark:bg-slate-800/60 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-slate-200 dark:border-slate-700 hover:border-purple-300 dark:hover:border-purple-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-purple-700 dark:hover:text-purple-300 transition-all flex items-center justify-between"
                   >
                     <span>⚖️ Verdadero / Falso</span>
                     <span className="text-slate-400 font-normal text-[11px]">Booleana</span>
@@ -607,15 +632,15 @@ export default function NuevaEvaluacionPage() {
                   <button
                     type="button"
                     onClick={() => agregarPregunta('COMPLETAR')}
-                    className="w-full text-left px-3.5 py-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-slate-700 hover:text-blue-700 transition-all flex items-center justify-between"
+                    className="w-full text-left px-3.5 py-2.5 bg-[#fafafc] dark:bg-slate-800/60 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-slate-200 dark:border-slate-700 hover:border-purple-300 dark:hover:border-purple-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-purple-700 dark:hover:text-purple-300 transition-all flex items-center justify-between"
                   >
                     <span>✏️ Completar Espacios</span>
-                    <span className="text-blue-600 font-semibold text-[11px]">Frase con tokens</span>
+                    <span className="text-purple-600 dark:text-purple-400 font-semibold text-[11px]">Frase con tokens</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => agregarPregunta('ABIERTA')}
-                    className="w-full text-left px-3.5 py-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-slate-700 hover:text-blue-700 transition-all flex items-center justify-between"
+                    className="w-full text-left px-3.5 py-2.5 bg-[#fafafc] dark:bg-slate-800/60 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-slate-200 dark:border-slate-700 hover:border-purple-300 dark:hover:border-purple-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-purple-700 dark:hover:text-purple-300 transition-all flex items-center justify-between"
                   >
                     <span>📝 Respuesta Abierta</span>
                     <span className="text-slate-400 font-normal text-[11px]">Desarrollo</span>
@@ -652,7 +677,7 @@ export default function NuevaEvaluacionPage() {
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
                 placeholder="Ej: Examen Parcial de Historia"
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl text-slate-900 font-bold text-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none transition-all"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl text-slate-900 font-bold text-lg focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:outline-none transition-all"
               />
             </div>
 
@@ -663,7 +688,7 @@ export default function NuevaEvaluacionPage() {
                 value={descripcion}
                 onChange={(e) => setDescripcion(e.target.value)}
                 placeholder="Instrucciones para el estudiante..."
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl text-slate-800 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none transition-all"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl text-slate-800 text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:outline-none transition-all"
               />
             </div>
           </div>
@@ -684,7 +709,7 @@ export default function NuevaEvaluacionPage() {
                   {/* Pregunta Item Header */}
                   <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                     <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center">
+                      <span className="w-6 h-6 rounded-full bg-purple-600 text-white font-bold text-xs flex items-center justify-center">
                         {pIdx + 1}
                       </span>
                       <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">
@@ -700,8 +725,8 @@ export default function NuevaEvaluacionPage() {
                           step="0.5"
                           min="0.5"
                           value={p.puntaje}
-                          onChange={(e) => handlePreguntaChange(pIdx, 'puntaje', e.target.value)}
-                          className="w-16 px-2.5 py-1 border border-slate-200 rounded-lg text-center text-xs text-slate-800 font-bold focus:outline-none focus:border-blue-500"
+                          onChange={(e) => handlePreguntaChange(pIdx, 'puntaje', Number(e.target.value))}
+                          className="w-16 px-2.5 py-1 border border-slate-200 rounded-lg text-center text-xs text-slate-800 font-bold focus:outline-none focus:border-purple-500"
                         />
                       </div>
                       <button
@@ -724,7 +749,7 @@ export default function NuevaEvaluacionPage() {
                         <button
                           type="button"
                           onClick={() => insertarEspacioEnTexto(pIdx)}
-                          className="px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition-colors border border-blue-200"
+                          className="px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 dark:text-purple-200 text-xs font-bold rounded-lg transition-colors border border-purple-200 dark:border-purple-800 dark:bg-purple-950/30"
                           title="Selecciona una palabra en el texto y haz clic aquí para convertirla en un espacio para completar"
                         >
                           + Marcar texto seleccionado como espacio
@@ -743,12 +768,12 @@ export default function NuevaEvaluacionPage() {
                           ? 'Ej: La capital de Francia es [_1_] y la de Italia es [_2_].'
                           : 'Redacta la pregunta aquí...'
                       }
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl text-slate-800 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none transition-all font-normal"
+                      className="w-full px-4 py-3 border border-slate-200 rounded-xl text-slate-800 text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:outline-none transition-all font-normal"
                     />
 
                     {p.tipo === 'COMPLETAR' && (
                       <p className="text-[11px] text-slate-400 mt-1">
-                        💡 Tip: Escribe tu frase completa, selecciona con el ratón la palabra que debe adivinar el estudiante y pulsa <strong>"Marcar texto seleccionado como espacio"</strong>.
+                        💡 Tip: Escribe tu frase completa, selecciona con el ratón la palabra que debe adivinar el estudiante y pulsa <strong>&quot;Marcar texto seleccionado como espacio&quot;</strong>.
                       </p>
                     )}
                   </div>
@@ -762,7 +787,7 @@ export default function NuevaEvaluacionPage() {
                           <button
                             type="button"
                             onClick={() => agregarOpcion(pIdx)}
-                            className="text-xs text-blue-600 font-bold hover:underline"
+                            className="text-xs text-purple-600 dark:text-purple-400 font-bold hover:underline"
                           >
                             + Añadir opción
                           </button>
@@ -775,14 +800,14 @@ export default function NuevaEvaluacionPage() {
                             name={`correcta_${pIdx}`}
                             checked={opc.esCorrecta}
                             onChange={(e) => handleOpcionChange(pIdx, oIdx, 'esCorrecta', e.target.checked)}
-                            className="w-4 h-4 text-blue-600 accent-blue-600 rounded"
+                            className="w-4 h-4 text-purple-600 dark:text-purple-400 accent-purple-600 rounded"
                           />
                           <input
                             type="text"
                             required
                             value={opc.texto}
                             onChange={(e) => handleOpcionChange(pIdx, oIdx, 'texto', e.target.value)}
-                            className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                            className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-purple-500"
                             placeholder={`Opción ${oIdx + 1}`}
                           />
                           {p.tipo !== 'VERDADERO_FALSO' && p.opciones.length > 2 && (
@@ -809,7 +834,7 @@ export default function NuevaEvaluacionPage() {
                         <button
                           type="button"
                           onClick={() => insertarEspacioEnTexto(pIdx)}
-                          className="text-xs text-blue-600 font-bold hover:underline"
+                          className="text-xs text-purple-600 dark:text-purple-400 font-bold hover:underline"
                         >
                           + Añadir espacio [_N_]
                         </button>
@@ -817,14 +842,14 @@ export default function NuevaEvaluacionPage() {
 
                       {p.espacios.length === 0 ? (
                         <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 text-center">
-                          Aún no has definido ningún espacio. Selecciona una palabra del enunciado o haz clic en "+ Añadir espacio".
+                          Aún no has definido ningún espacio. Selecciona una palabra del enunciado o haz clic en &quot;+ Añadir espacio&quot;.
                         </div>
                       ) : (
                         <div className="space-y-3">
                           {p.espacios.map((esp, eIdx) => (
-                            <div key={eIdx} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
+                            <div key={eIdx} className="p-4 bg-[#fafafc] border border-slate-200 rounded-2xl space-y-3 text-xs">
                               <div className="flex items-center justify-between">
-                                <span className="font-bold text-blue-600 text-xs uppercase tracking-wide">
+                                <span className="font-bold text-purple-600 dark:text-purple-400 text-xs uppercase tracking-wide">
                                   Espacio [_{esp.numeroEspacio}_]
                                 </span>
                                 <button
@@ -848,7 +873,7 @@ export default function NuevaEvaluacionPage() {
                                     const array = e.target.value.split(',').map((s) => s.trim());
                                     handleEspacioPropChange(pIdx, eIdx, 'respuestasValidas', array);
                                   }}
-                                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-800 font-medium focus:outline-none focus:border-blue-500"
+                                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-800 font-medium focus:outline-none focus:border-purple-500"
                                 />
                               </div>
 
@@ -858,7 +883,7 @@ export default function NuevaEvaluacionPage() {
                                     type="checkbox"
                                     checked={esp.ignorarMayusculas}
                                     onChange={(e) => handleEspacioPropChange(pIdx, eIdx, 'ignorarMayusculas', e.target.checked)}
-                                    className="rounded text-blue-600 accent-blue-600"
+                                    className="rounded text-purple-600 dark:text-purple-400 accent-purple-600"
                                   />
                                   <span>Ignorar mayúsculas y minúsculas</span>
                                 </label>
@@ -867,7 +892,11 @@ export default function NuevaEvaluacionPage() {
                                   <span>Modo de calificación:</span>
                                   <select
                                     value={esp.modoCalificacion}
-                                    onChange={(e) => handleEspacioPropChange(pIdx, eIdx, 'modoCalificacion', e.target.value)}
+                                    onChange={(e) => {
+                                      if (e.target.value === 'EXACTA' || e.target.value === 'CONTIENE') {
+                                        handleEspacioPropChange(pIdx, eIdx, 'modoCalificacion', e.target.value);
+                                      }
+                                    }}
                                     className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-800 font-medium"
                                   >
                                     <option value="EXACTA">Coincidencia Exacta</option>

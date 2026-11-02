@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import ThemeToggle from '@/components/ThemeToggle';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -16,6 +17,25 @@ type Pregunta = {
   opciones: { texto: string; esCorrecta: boolean }[];
   espacios: { numeroEspacio: number; ignorarMayusculas: boolean; modoCalificacion: 'EXACTA' | 'CONTIENE'; respuestasValidas: string[] }[];
 };
+
+interface PreguntaEdicionAPI extends Omit<Pregunta, 'opciones' | 'espacios' | 'puntaje'> {
+  puntaje: number | string;
+  opciones: { texto: string; esCorrecta: boolean }[];
+  espacios?: {
+    numeroEspacio: number;
+    ignorarMayusculas?: boolean;
+    modoCalificacion?: 'EXACTA' | 'CONTIENE';
+    respuestasValidas?: (string | { respuesta: string })[];
+  }[];
+}
+
+interface EvaluacionEdicionAPI {
+  message?: string;
+  nombre: string;
+  descripcion?: string | null;
+  preguntas: PreguntaEdicionAPI[];
+  [key: string]: unknown;
+}
 
 export default function EditarEvaluacionPage() {
   const { id } = useParams<{ id: string }>();
@@ -37,7 +57,7 @@ export default function EditarEvaluacionPage() {
     }
     fetch(`${API}/evaluaciones/${id}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(async (res) => {
-        const data = await res.json();
+        const data = (await res.json()) as EvaluacionEdicionAPI;
         if (!res.ok) throw new Error(data.message || 'No se pudo cargar la evaluación.');
         setNombre(data.nombre);
         setDescripcion(data.descripcion || '');
@@ -61,15 +81,17 @@ export default function EditarEvaluacionPage() {
           fechaInicio: data.fechaInicio,
           fechaFin: data.fechaFin,
         });
-        setPreguntas(data.preguntas.map((pregunta: any) => ({
+        setPreguntas(data.preguntas.map((pregunta) => ({
           ...pregunta,
           puntaje: Number(pregunta.puntaje),
-          opciones: pregunta.opciones.map((opcion: any) => ({ texto: opcion.texto, esCorrecta: opcion.esCorrecta })),
-          espacios: (pregunta.espacios || []).map((espacio: any) => ({
+          opciones: pregunta.opciones.map((opcion) => ({ texto: opcion.texto, esCorrecta: opcion.esCorrecta })),
+          espacios: (pregunta.espacios || []).map((espacio) => ({
             numeroEspacio: espacio.numeroEspacio,
             ignorarMayusculas: espacio.ignorarMayusculas ?? true,
             modoCalificacion: espacio.modoCalificacion || 'EXACTA',
-            respuestasValidas: (espacio.respuestasValidas || []).map((respuesta: any) => respuesta.respuesta || respuesta),
+            respuestasValidas: (espacio.respuestasValidas || []).map((respuesta) =>
+              typeof respuesta === 'string' ? respuesta : respuesta.respuesta,
+            ),
           })),
         })));
       })
@@ -142,8 +164,8 @@ export default function EditarEvaluacionPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'No se pudo guardar la evaluación.');
       router.push('/docente/dashboard');
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar la evaluación.');
     } finally {
       setGuardando(false);
     }
@@ -151,16 +173,16 @@ export default function EditarEvaluacionPage() {
 
   if (cargando) {
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <main className="min-h-screen bg-[#fafafc] flex items-center justify-center">
         <p className="text-slate-400 animate-pulse">Cargando evaluación...</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-800 p-6 font-sans">
+    <main className="min-h-screen bg-[#fafafc] dark:bg-[#0d0b14] text-slate-800 dark:text-slate-100 p-6 font-sans">
       <div className="max-w-4xl mx-auto space-y-6">
-        <header className="bg-white border border-slate-200 rounded-2xl px-6 py-4 flex items-center justify-between shadow-sm sticky top-4 z-20">
+        <header className="bg-white dark:bg-[#171424] border border-slate-200 dark:border-slate-800 rounded-2xl px-6 py-4 flex items-center justify-between shadow-sm sticky top-4 z-20">
           <div className="flex items-center gap-3">
             <Link href="/docente/dashboard" className="text-sm font-semibold text-slate-400 hover:text-slate-700 transition-colors">
               ← Volver al Dashboard
@@ -168,13 +190,16 @@ export default function EditarEvaluacionPage() {
             <span className="text-slate-200">|</span>
             <span className="text-sm font-bold text-slate-900">Editar Evaluación</span>
           </div>
-          <button
-            onClick={guardar}
-            disabled={guardando}
-            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold text-sm shadow-md shadow-blue-500/25 transition-colors disabled:opacity-50"
-          >
-            {guardando ? 'Guardando...' : 'Guardar Cambios'}
-          </button>
+          <div className="flex items-center gap-3">
+            <ThemeToggle />
+            <button
+              onClick={guardar}
+              disabled={guardando}
+              className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-full font-bold text-sm shadow-md shadow-purple-500/25 transition-colors disabled:opacity-50"
+            >
+              {guardando ? 'Guardando...' : 'Guardar Cambios'}
+            </button>
+          </div>
         </header>
 
         {error && (
@@ -191,7 +216,7 @@ export default function EditarEvaluacionPage() {
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
                 required
-                className="w-full text-xl font-bold border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 text-slate-900"
+                className="w-full text-xl font-bold border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-purple-500 text-slate-900"
               />
             </div>
             <div>
@@ -201,7 +226,7 @@ export default function EditarEvaluacionPage() {
                 onChange={(e) => setDescripcion(e.target.value)}
                 rows={2}
                 placeholder="Descripción general..."
-                className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:border-blue-500 text-slate-800"
+                className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:border-purple-500 text-slate-800"
               />
             </div>
           </section>
@@ -210,7 +235,7 @@ export default function EditarEvaluacionPage() {
             <section key={index} className="bg-white rounded-3xl border border-slate-200 p-6 space-y-4 shadow-sm">
               <div className="flex justify-between items-center pb-3 border-b border-slate-100">
                 <span className="font-bold text-slate-800 text-sm">
-                  Pregunta {index + 1} · <span className="text-blue-600">{pregunta.tipo.replace(/_/g, ' ')}</span>
+                  Pregunta {index + 1} · <span className="text-purple-600 dark:text-purple-400">{pregunta.tipo.replace(/_/g, ' ')}</span>
                 </span>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-400 font-medium">Puntos:</span>
@@ -234,7 +259,7 @@ export default function EditarEvaluacionPage() {
                     <button
                       type="button"
                       onClick={() => insertarEspacioEnTexto(index)}
-                      className="px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition-colors border border-blue-200"
+                      className="px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 dark:text-purple-200 text-xs font-bold rounded-lg transition-colors border border-purple-200 dark:border-blue-800 dark:bg-purple-950/30"
                     >
                       + Marcar texto seleccionado como espacio
                     </button>
@@ -247,7 +272,7 @@ export default function EditarEvaluacionPage() {
                   onChange={(e) => actualizarPregunta(index, { enunciado: e.target.value })}
                   required
                   rows={pregunta.tipo === 'COMPLETAR' ? 3 : 2}
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 focus:outline-none focus:border-blue-500"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 focus:outline-none focus:border-purple-500"
                 />
               </div>
 
@@ -267,7 +292,7 @@ export default function EditarEvaluacionPage() {
                             })),
                           })
                         }
-                        className="w-4 h-4 text-blue-600 accent-blue-600"
+                        className="w-4 h-4 text-purple-600 dark:text-purple-400 accent-purple-600"
                       />
                       <input
                         value={opcion.texto}
@@ -276,7 +301,7 @@ export default function EditarEvaluacionPage() {
                             opciones: pregunta.opciones.map((actual, i) => (i === opcionIndex ? { ...actual, texto: e.target.value } : actual)),
                           })
                         }
-                        className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                        className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-purple-500"
                       />
                     </div>
                   ))}
@@ -287,9 +312,9 @@ export default function EditarEvaluacionPage() {
                 <div className="space-y-3 pt-2">
                   <span className="text-xs font-bold text-slate-700 uppercase">Respuestas válidas por espacio</span>
                   {pregunta.espacios.map((espacio, espacioIndex) => (
-                    <div key={espacioIndex} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 text-xs">
+                    <div key={espacioIndex} className="p-4 bg-[#fafafc] border border-slate-200 rounded-2xl space-y-2 text-xs">
                       <div className="flex justify-between items-center">
-                        <span className="font-bold text-blue-600 uppercase">Espacio [_{espacio.numeroEspacio}_]</span>
+                        <span className="font-bold text-purple-600 dark:text-purple-400 uppercase">Espacio [_{espacio.numeroEspacio}_]</span>
                         <button
                           type="button"
                           onClick={() => eliminarEspacio(index, espacioIndex)}
